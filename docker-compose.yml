@@ -168,6 +168,9 @@ services:
       DSPACE_API_URL: ${DSPACE_API_URL:-https://sic.usach.cl/server/api}
       DSPACE_USERNAME: ${DSPACE_USERNAME:-agente-ia@usach.cl}
       DSPACE_PASSWORD: ${DSPACE_PASSWORD}
+      DSPACE_CACHE_DIR: /app/cache_dspace
+    volumes:
+      - ./cache_dspace:/app/cache_dspace
     ports:
       - "8000:8000"
     secrets:

@@ -176,6 +176,7 @@ class DSpaceEnrichmentQueue(Base):
     palabras_clave = Column(JSON, nullable=True)
     fuente_financiamiento = Column(JSON, nullable=True)
     derechos_acceso = Column(String, nullable=True)
+    licencia = Column(String, nullable=True)
     area_ocde = Column(JSON, nullable=True)
     area_ods = Column(JSON, nullable=True)
     metadatos_recuperados = Column(JSON, nullable=True)

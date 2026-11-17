@@ -64,6 +64,21 @@ def process_rabbitmq_response(payload: dict):
 def startup():
     Base.metadata.create_all(bind=engine)
     try:
+        from sqlalchemy import inspect, text
+        inspector = inspect(engine)
+        if "dspace_enrichment_queue" in inspector.get_table_names():
+            cols = [c["name"] for c in inspector.get_columns("dspace_enrichment_queue")]
+            with engine.connect() as conn:
+                if "licencia" not in cols:
+                    conn.execute(text("ALTER TABLE dspace_enrichment_queue ADD COLUMN licencia VARCHAR;"))
+                    conn.commit()
+                if "metadatos_recuperados" not in cols:
+                    conn.execute(text("ALTER TABLE dspace_enrichment_queue ADD COLUMN metadatos_recuperados JSON;"))
+                    conn.commit()
+    except Exception as e_col:
+        logger.info(f"[MS4] Chequeo de columnas en dspace_enrichment_queue: {e_col}")
+
+    try:
         db = SessionLocal()
         run_full_seeding(db)
         db.close()

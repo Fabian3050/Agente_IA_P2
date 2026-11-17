@@ -1,10 +1,120 @@
-from clients.dspace_auth_client import DSpaceAuthClient
+import os
+import json
+import glob
+try:
+    from clients.dspace_auth_client import DSpaceAuthClient
+except ImportError:
+    from services.ms4_orchestrator.clients.dspace_auth_client import DSpaceAuthClient
 import asyncio
+
+def normalize_license(raw_license: str = None) -> str | None:
+    """Normaliza identificadores y URLs de licencias a formato estándar legible (ej: cc-by)."""
+    if not raw_license:
+        return None
+    raw = str(raw_license).strip()
+    if raw in ["No disponible", "", "None", "null", "undefined"]:
+        return None
+    low = raw.lower()
+    if "by-nc-nd" in low:
+        return "cc-by-nc-nd"
+    if "by-nc-sa" in low:
+        return "cc-by-nc-sa"
+    if "by-nc" in low:
+        return "cc-by-nc"
+    if "by-sa" in low:
+        return "cc-by-sa"
+    if "by-nd" in low:
+        return "cc-by-nd"
+    if "cc0" in low or "zero" in low:
+        return "cc0"
+    if "publicdomain" in low or "public domain" in low or "public-domain" in low:
+        return "public-domain"
+    if "creativecommons.org" in low or "creative commons" in low or low.startswith("cc"):
+        if "by" in low:
+            return "cc-by"
+        return "cc-by"
+    return raw
 
 class DSpaceService:
     def __init__(self):
         self.client = DSpaceAuthClient()
         self.token = None # Aquí guardaremos el token para no pedirlo en cada consulta
+
+    @property
+    def cache_dir(self) -> str:
+        """
+        Retorna la ruta al directorio de caché de DSpace.
+        Prioriza la variable de entorno DSPACE_CACHE_DIR,
+        luego busca en la raíz del proyecto o en el directorio actual.
+        Asegura que el directorio exista en disco.
+        """
+        env_dir = os.environ.get("DSPACE_CACHE_DIR")
+        if env_dir:
+            path = os.path.abspath(env_dir)
+        else:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            repo_root = os.path.abspath(os.path.join(current_dir, "..", "..", ".."))
+            root_cache = os.path.join(repo_root, "cache_dspace")
+            
+            if os.path.exists("cache_dspace"):
+                path = os.path.abspath("cache_dspace")
+            elif os.path.exists(root_cache):
+                path = root_cache
+            elif os.path.exists(os.path.join(repo_root, "docker-compose.yml")):
+                path = root_cache
+            else:
+                path = os.path.abspath("cache_dspace")
+
+        if not os.path.exists(path):
+            os.makedirs(path, exist_ok=True)
+        return path
+
+    def get_cache_stats(self) -> dict:
+        """Retorna estadísticas sobre los archivos y tamaño de la caché en disco."""
+        d = self.cache_dir
+        if not os.path.exists(d):
+            return {
+                "cache_dir": d,
+                "total_files": 0,
+                "page_files": 0,
+                "item_files": 0,
+                "size_bytes": 0
+            }
+        
+        page_files = glob.glob(os.path.join(d, "page_*.json"))
+        item_files = glob.glob(os.path.join(d, "item_*.json"))
+        all_files = glob.glob(os.path.join(d, "*.json"))
+        total_size = sum(os.path.getsize(f) for f in all_files if os.path.exists(f))
+        
+        return {
+            "cache_dir": d,
+            "total_files": len(all_files),
+            "page_files": len(page_files),
+            "item_files": len(item_files),
+            "size_bytes": total_size
+        }
+
+    def clear_cache(self, clear_pages: bool = True, clear_items: bool = True) -> dict:
+        """Limpia archivos de caché en disco para forzar refresco."""
+        d = self.cache_dir
+        deleted = 0
+        if os.path.exists(d):
+            patterns = []
+            if clear_pages:
+                patterns.append("page_*.json")
+            if clear_items:
+                patterns.append("item_*.json")
+            if clear_pages and clear_items:
+                patterns.append("*.json")
+                
+            for pat in set(patterns):
+                for f in glob.glob(os.path.join(d, pat)):
+                    try:
+                        os.remove(f)
+                        deleted += 1
+                    except Exception:
+                        pass
+        return {"deleted_files": deleted, "cache_dir": d}
         
     async def _ensure_authenticated(self):
         """Helper para autenticarse solo si no tenemos un token activo."""
@@ -16,21 +126,18 @@ class DSpaceService:
     async def get_all_items(self, page: int = 0, size: int = 20, use_cache: bool = True):
         """
         Obtiene ítems del repositorio con paginación.
-        Implementa una caché local en disco para no saturar la API ni la RAM.
+        Implementa una caché local en disco para no saturar la API ni la RAM y consumir datos más rápido.
         """
-        import os
-        import json
-        
-        cache_dir = "cache_dspace"
-        if not os.path.exists(cache_dir):
-            os.makedirs(cache_dir)
-            
+        cache_dir = self.cache_dir
         cache_file = os.path.join(cache_dir, f"page_{page}_size_{size}.json")
         
         # 1. Intentamos leer desde la caché en disco
         if use_cache and os.path.exists(cache_file):
-            with open(cache_file, "r", encoding="utf-8") as f:
-                return json.load(f)
+            try:
+                with open(cache_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
                 
         await self._ensure_authenticated()
         
@@ -60,8 +167,18 @@ class DSpaceService:
         
         # 2. Guardamos el resultado en disco
         if use_cache:
-            with open(cache_file, "w", encoding="utf-8") as f:
-                json.dump(result, f, ensure_ascii=False, indent=2)
+            try:
+                with open(cache_file, "w", encoding="utf-8") as f:
+                    json.dump(result, f, ensure_ascii=False, indent=2)
+                # Cachear individualmente por UUID para acelerar consultas puntuales
+                for itm in items:
+                    u = itm.get("uuid")
+                    if u:
+                        item_file = os.path.join(cache_dir, f"item_{u}.json")
+                        with open(item_file, "w", encoding="utf-8") as f_item:
+                            json.dump(itm, f_item, ensure_ascii=False, indent=2)
+            except Exception:
+                pass
                 
         return result
 
@@ -86,6 +203,48 @@ class DSpaceService:
             return [str(v.get("value")).strip() for v in values if v.get("value") is not None and str(v.get("value")).strip()]
 
         title_candidate = get_metadata_value("dc.title") or indexable_object.get("name") or "Sin título"
+        
+        # Fuentes de financiamiento (DSpace-CRIS / OpenAIRE / Dublin Core)
+        funding_fields = [
+            "dc.description.sponsorship",
+            "oairecerif.funding",
+            "oairecerif.funder",
+            "oaire.fundingStream",
+            "dc.contributor.funder",
+            "crisfund.funding",
+            "project.funding"
+        ]
+        funding_list = []
+        for ff in funding_fields:
+            vals = get_metadata_values_list(ff)
+            if vals:
+                funding_list.extend(vals)
+
+        # Derechos de acceso (openAccess, restrictedAccess, etc.)
+        rights_candidate = (
+            get_metadata_value("dc.rights") or
+            get_metadata_value("oaire.openAccess") or
+            get_metadata_value("dc.rights.accessRights") or
+            None
+        )
+
+        # Licencia (ej. cc-by, URL Creative Commons, etc.)
+        raw_license_candidate = (
+            get_metadata_value("dc.rights.license") or
+            get_metadata_value("oaire.licenseCondition") or
+            get_metadata_value("dc.rights.uri") or
+            get_metadata_value("cclicense.uri") or
+            None
+        )
+
+        # Si dc.rights contiene la licencia en lugar del estado de acceso
+        if not raw_license_candidate and rights_candidate and any(k in rights_candidate.lower() for k in ["creative", "cc-", "cc ", "by", "license"]):
+            raw_license_candidate = rights_candidate
+            if "open" not in rights_candidate.lower():
+                rights_candidate = None
+
+        license_candidate = normalize_license(raw_license_candidate)
+
         return {
             "uuid": indexable_object.get("id") or indexable_object.get("uuid"),
             "title": title_candidate,
@@ -94,17 +253,51 @@ class DSpaceService:
             "type": get_metadata_value("dc.type", "No disponible"),
             "oaire_resourcetype": get_metadata_value("oaire.resourceType", "No disponible"),
             "keywords": get_metadata_values_list("dc.subject"), # Puede tener múltiples valores
+            "funding": funding_list, # Lista de entidades o proyectos de financiamiento
+            "rights": rights_candidate, # Derechos de acceso
+            "license": license_candidate, # Licencia (ej. cc-by)
             "uri": get_metadata_value("dc.identifier.uri"), # Link público usualmente
             "all_metadata": metadata
         }
         
-    async def get_metadata(self, identifier: str):
+    async def get_metadata(self, identifier: str, use_cache: bool = True):
         """
         Obtiene los metadatos de un ID en específico (UUID).
-        Busca a través de todas las páginas de resultados en paralelo
-        para encontrar el registro, dado que el filtrado de la API 
-        no lo encuentra directamente en esta instancia.
+        Implementa caché en disco para respuesta inmediata.
+        Si use_cache=True:
+          1. Intenta leer 'item_{identifier}.json' desde el cache_dir.
+          2. Busca el UUID dentro de los archivos 'page_*.json' cacheados.
+          3. Si no está en caché, consulta DSpace y almacena el resultado en caché.
         """
+        cache_dir = self.cache_dir
+        item_cache_file = os.path.join(cache_dir, f"item_{identifier}.json")
+        
+        # 1. Intentar leer caché puntual del ítem
+        if use_cache and os.path.exists(item_cache_file):
+            try:
+                with open(item_cache_file, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except Exception:
+                pass
+
+        # 2. Intentar buscar en páginas ya cacheadas en disco
+        if use_cache and os.path.exists(cache_dir):
+            try:
+                for page_file in glob.glob(os.path.join(cache_dir, "page_*.json")):
+                    with open(page_file, "r", encoding="utf-8") as pf:
+                        p_data = json.load(pf)
+                        for itm in p_data.get("items", []):
+                            if itm.get("uuid") == identifier:
+                                # Guardar en caché puntual para la próxima consulta
+                                try:
+                                    with open(item_cache_file, "w", encoding="utf-8") as itm_f:
+                                        json.dump(itm, itm_f, ensure_ascii=False, indent=2)
+                                except Exception:
+                                    pass
+                                return itm
+            except Exception:
+                pass
+
         await self._ensure_authenticated()
         
         size = 100
@@ -133,6 +326,12 @@ class DSpaceService:
         if encontrado_raw:
             item_data = self._parse_item(encontrado_raw)
             item_data["all_metadata"] = encontrado_raw.get("_embedded", {}).get("indexableObject", {}).get("metadata", {})
+            if use_cache:
+                try:
+                    with open(item_cache_file, "w", encoding="utf-8") as f:
+                        json.dump(item_data, f, ensure_ascii=False, indent=2)
+                except Exception:
+                    pass
             return item_data
             
         page_info = search_result.get("page", {})
@@ -168,20 +367,27 @@ class DSpaceService:
                             t.cancel()
                     item_data = self._parse_item(resultado_tarea)
                     item_data["all_metadata"] = resultado_tarea.get("_embedded", {}).get("indexableObject", {}).get("metadata", {})
+                    if use_cache:
+                        try:
+                            with open(item_cache_file, "w", encoding="utf-8") as f:
+                                json.dump(item_data, f, ensure_ascii=False, indent=2)
+                        except Exception:
+                            pass
                     return item_data
                     
         return {"error": f"No se encontró ningún registro con el UUID {identifier} en todo el repositorio."}
 
-    async def count_missing_metadata_optimized(self, size: int = 100, max_concurrent: int = 5, save_to_db: bool = False, db = None):
+    async def count_missing_metadata_optimized(self, size: int = 100, max_concurrent: int = 5, save_to_db: bool = False, db = None, use_cache: bool = True):
         """
         Recorre el repositorio en paralelo para máxima velocidad.
         Cuenta ítems sin abstract y sin DOI dentro de valid_resource_types.
         Opcionalmente guarda el histórico de métricas y la cola de enriquecimiento en base de datos.
+        Aprovecha la caché local en disco para acelerar consultas recurrentes.
         """
         print("Iniciando escaneo optimizado de metadatos faltantes...")
         
         # 1. Petición inicial
-        resultado_inicial = await self.get_all_items(page=0, size=size)
+        resultado_inicial = await self.get_all_items(page=0, size=size, use_cache=use_cache)
         page_info = resultado_inicial.get("page_info", {})
         total_pages = page_info.get("totalPages", 1)
         
@@ -279,12 +485,27 @@ class DSpaceService:
 
                 # Title
                 title_val = item.get("title")
-                if title_val in ["No disponible", "", "Sin título", None]:
+                is_missing_title = title_val in ["No disponible", "", "Sin título", None]
+                if is_missing_title:
                     missing_title_pag += 1
 
                 # Keywords / Subjects
-                if not item.get("keywords"):
+                keywords_val = item.get("keywords") or []
+                is_missing_keywords = not keywords_val or len(keywords_val) == 0
+                if is_missing_keywords:
                     missing_subjects_pag += 1
+
+                # Funding / Financiamiento
+                funding_val = item.get("funding") or []
+                is_missing_funding = not funding_val or len(funding_val) == 0
+
+                # Rights / Derechos de acceso
+                rights_val = item.get("rights")
+                is_missing_rights = not rights_val or rights_val in ["No disponible", "", None]
+
+                # License / Licencia
+                license_val = item.get("license")
+                is_missing_license = not license_val or license_val in ["No disponible", "", None]
 
                 # Type
                 if item.get("type") == "text::journal::journal article":
@@ -302,20 +523,36 @@ class DSpaceService:
                     pub_sin_doi_sin_abs += 1
                     uuids_pub_sin_doi_sin_abs.append(uuid)
 
-                # Si le falta abstract o DOI, es candidato para la cola de enriquecimiento
-                if is_any_missing_abs or is_missing_doi:
-                    falencia = (
-                        "SIN_ABSTRACT_CON_DOI" if (is_any_missing_abs and has_doi) else
-                        "SIN_DOI_NI_ABSTRACT" if (is_any_missing_abs and is_missing_doi) else
-                        "SIN_DOI" if is_missing_doi else
-                        "SIN_ABSTRACT"
-                    )
+                # Construcción integral de falencias de metadatos detectadas
+                falencias = []
+                if is_any_missing_abs and is_missing_doi:
+                    falencias.append("SIN_DOI_NI_ABSTRACT")
+                elif is_any_missing_abs and has_doi:
+                    falencias.append("SIN_ABSTRACT_CON_DOI")
+                elif is_any_missing_abs:
+                    falencias.append("SIN_ABSTRACT")
+                elif is_missing_doi:
+                    falencias.append("SIN_DOI")
+
+                if is_missing_keywords:
+                    falencias.append("SIN_PALABRAS_CLAVE")
+                if is_missing_funding:
+                    falencias.append("SIN_FINANCIAMIENTO")
+                if is_missing_rights:
+                    falencias.append("SIN_DERECHOS_ACCESO")
+                if is_missing_license:
+                    falencias.append("SIN_LICENCIA")
+
+                # Si le falta cualquiera de los metadatos analizados, es candidato para enriquecimiento
+                if falencias:
                     candidatos_pag.append({
                         "dspace_uuid": uuid,
                         "doi": doi_val if has_doi else None,
-                        "titulo": title_val if title_val not in ["No disponible", "", "Sin título", None] else None,
+                        "titulo": title_val if not is_missing_title else None,
                         "tipo_recurso": oaire_val,
-                        "tipo_falencia": falencia,
+                        "tipo_falencia": ", ".join(falencias),
+                        "derechos_acceso": rights_val if not is_missing_rights else None,
+                        "licencia": license_val if not is_missing_license else None,
                         "resumen_original": abs_val if not is_any_missing_abs else None
                     })
                     
@@ -361,7 +598,7 @@ class DSpaceService:
                 async with semaphore:
                     try:
                         print(f"Consultando página {page_num}/{total_pages - 1}...")
-                        resultado = await self.get_all_items(page=page_num, size=size)
+                        resultado = await self.get_all_items(page=page_num, size=size, use_cache=use_cache)
                         return procesar_items(resultado.get("items", []))
                     except Exception as e:
                         print(f"Error procesando página {page_num}: {e}")
@@ -418,6 +655,8 @@ class DSpaceService:
             "uuids_pub_sin_doi_sin_abs": total_uuids_pub_sin_doi_sin_abs,
             "uuids_sin_abstract_con_doi": total_uuids_sin_abstract_con_doi,
             "uuids_sin_doi_ni_abstract": total_uuids_sin_doi_ni_abstract,
+            "total_candidatos_detectados": len(total_candidatos_enriquecimiento),
+            "candidatos_enriquecimiento": total_candidatos_enriquecimiento,
         }
 
         if save_to_db and db is not None:
@@ -431,7 +670,10 @@ class DSpaceService:
         Persiste el snapshot histórico de métricas en DSpaceMetricsHistory
         y registra los ítems candidatos a enriquecer en DSpaceEnrichmentQueue.
         """
-        from models import DSpaceMetricsHistory, DSpaceEnrichmentQueue
+        try:
+            from models import DSpaceMetricsHistory, DSpaceEnrichmentQueue
+        except ImportError:
+            from services.ms4_orchestrator.models import DSpaceMetricsHistory, DSpaceEnrichmentQueue
 
         # 1. Guardar Snapshot histórico
         snapshot = DSpaceMetricsHistory(
@@ -470,9 +712,24 @@ class DSpaceService:
                     titulo=c.get("titulo"),
                     tipo_recurso=c.get("tipo_recurso"),
                     tipo_falencia=c.get("tipo_falencia"),
+                    derechos_acceso=c.get("derechos_acceso"),
+                    licencia=c.get("licencia"),
                     estado="PENDIENTE",
                     resumen_original=c.get("resumen_original")
                 ))
+            elif uuid and uuid in existing_uuids and c.get("tipo_falencia"):
+                # Actualizar falencias completas en registros existentes que sigan pendientes
+                update_fields = {
+                    DSpaceEnrichmentQueue.tipo_falencia: c.get("tipo_falencia")
+                }
+                if c.get("derechos_acceso"):
+                    update_fields[DSpaceEnrichmentQueue.derechos_acceso] = c.get("derechos_acceso")
+                if c.get("licencia"):
+                    update_fields[DSpaceEnrichmentQueue.licencia] = c.get("licencia")
+                db.query(DSpaceEnrichmentQueue).filter(
+                    DSpaceEnrichmentQueue.dspace_uuid == uuid,
+                    DSpaceEnrichmentQueue.estado == "PENDIENTE"
+                ).update(update_fields, synchronize_session=False)
 
         if new_items:
             db.bulk_save_objects(new_items)

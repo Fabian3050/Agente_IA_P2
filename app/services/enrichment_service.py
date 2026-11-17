@@ -12,6 +12,7 @@ from app.models.db_models import DSpaceEnrichmentQueue
 from app.models.metadata_model import MetadataResponse
 from app.services.metadata_service import MetadataService
 from app.services.classification_service import ClassificationService
+from app.services.dspace_service import normalize_license
 
 class EnrichmentService:
     """
@@ -38,7 +39,8 @@ class EnrichmentService:
         abstract_encontrado: Optional[str] = None
         keywords_acumuladas = set()
         financiamiento_acumulado = set()
-        derechos_acceso: Optional[str] = None
+        derechos_acceso: Optional[str] = getattr(item, "derechos_acceso", None)
+        licencia_encontrada: Optional[str] = getattr(item, "licencia", None)
         doi_encontrado: Optional[str] = item.doi
         raw_responses: List[Dict[str, Any]] = []
 
@@ -95,8 +97,12 @@ class EnrichmentService:
                                 financiamiento_acumulado.add(fn.strip())
 
                     # Derechos de acceso (Open Access, Closed, etc.)
-                    if not derechos_acceso and r.derechos_acceso:
-                        derechos_acceso = r.derechos_acceso.strip()
+                    if not derechos_acceso and (r.derechos_acceso or r.oa_status):
+                        derechos_acceso = (r.derechos_acceso or r.oa_status).strip()
+
+                    # Licencia (ej. CC-BY)
+                    if not licencia_encontrada and r.license:
+                        licencia_encontrada = normalize_license(r.license)
 
                     # Guardar respuesta resumida para respaldo
                     raw_responses.append({
@@ -105,7 +111,8 @@ class EnrichmentService:
                         "doi": r.doi,
                         "has_abstract": bool(r.abstract),
                         "keywords_count": len(r.keywords) if r.keywords else 0,
-                        "derechos_acceso": r.derechos_acceso
+                        "derechos_acceso": r.derechos_acceso,
+                        "license": r.license
                     })
 
                 # Actualizar campos del registro
@@ -117,6 +124,8 @@ class EnrichmentService:
                     item.fuente_financiamiento = list(financiamiento_acumulado)
                 if derechos_acceso:
                     item.derechos_acceso = derechos_acceso
+                if licencia_encontrada:
+                    item.licencia = licencia_encontrada
                 if doi_encontrado and not item.doi:
                     item.doi = doi_encontrado
 
@@ -173,6 +182,21 @@ class EnrichmentService:
                         elif item.estado == "NO_ENCONTRADO":
                             item.estado = "CLASIFICADO_LLM"
 
+            # Incorporar metadatos enriquecidos en el campo 'metadatos_recuperados' de dspace_enrichment_queue
+            item.metadatos_recuperados = {
+                "abstract": item.abstract_enriquecido,
+                "keywords": item.palabras_clave,
+                "funding": item.fuente_financiamiento,
+                "access_rights": item.derechos_acceso,
+                "license": getattr(item, "licencia", None) or licencia_encontrada,
+                "doi": item.doi,
+                "sources": list(sorted(fuentes_utilizadas)) if fuentes_utilizadas else [],
+                "area_ocde": item.area_ocde,
+                "area_ods": item.area_ods,
+                "raw_responses": raw_responses if raw_responses else [],
+                "recovered_at": datetime.utcnow().isoformat()
+            }
+
             item.mensaje_error = None
 
         except Exception as e:
@@ -196,8 +220,10 @@ class EnrichmentService:
             "palabras_clave": item.palabras_clave,
             "fuente_financiamiento": item.fuente_financiamiento,
             "derechos_acceso": item.derechos_acceso,
+            "licencia": getattr(item, "licencia", None),
             "area_ocde": item.area_ocde,
             "area_ods": item.area_ods,
+            "metadatos_recuperados": item.metadatos_recuperados,
             "mensaje_error": item.mensaje_error
         }
 

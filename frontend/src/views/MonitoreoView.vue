@@ -30,15 +30,27 @@
           />
         </div>
 
-        <div class="flex gap-2 ml-auto">
+        <div class="flex gap-2 ml-auto flex-wrap items-center">
+          <button
+            @click="scanAndPopulateMissing"
+            :disabled="scanningMissing || runningBatch"
+            class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white rounded-lg shadow-sm hover:opacity-95 transition-all cursor-pointer disabled:opacity-50"
+            style="background: #1565C0"
+            title="Escanear DSpace-CRIS y guardar elementos que carecen de metadatos completos en la cola de enriquecimiento"
+          >
+            <div v-if="scanningMissing" class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+            <RefreshCw v-else :size="13" />
+            <span>{{ scanningMissing ? 'Escaneando DSpace...' : 'Escanear y Guardar Incompletos (DSpace)' }}</span>
+          </button>
+
           <button
             @click="runAgentOnAll"
-            :disabled="runningBatch"
+            :disabled="runningBatch || scanningMissing"
             class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white rounded-lg shadow-sm hover:opacity-95 transition-all cursor-pointer disabled:opacity-50"
             style="background: #00aea7"
           >
             <Zap :size="13" />
-            <span>{{ runningBatch ? 'Enriqueciendo...' : 'Ejecutar todos los pendientes' }}</span>
+            <span>{{ runningBatch ? 'Enriqueciendo...' : 'Enriquecer todos los pendientes' }}</span>
           </button>
           <button
             @click="exportSummary"
@@ -56,6 +68,7 @@
           <thead>
             <tr class="border-b border-gray-50">
               <th class="text-left px-4 py-3 text-[11px] font-semibold text-[#6b7a90] uppercase tracking-wide">ID</th>
+              <th class="text-left px-4 py-3 text-[11px] font-semibold text-[#6b7a90] uppercase tracking-wide">UUID DSpace</th>
               <th class="text-left px-4 py-3 text-[11px] font-semibold text-[#6b7a90] uppercase tracking-wide">Título / DOI</th>
               <th class="text-left px-4 py-3 text-[11px] font-semibold text-[#6b7a90] uppercase tracking-wide">Comunidad</th>
               <th class="text-left px-4 py-3 text-[11px] font-semibold text-[#6b7a90] uppercase tracking-wide">Campo faltante</th>
@@ -116,14 +129,24 @@
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="7" class="text-center py-12 text-slate-500 text-xs">
+              <td colspan="8" class="text-center py-12 text-slate-500 text-xs">
                 <div class="inline-block w-4 h-4 border-2 border-[#00aea7] border-t-transparent rounded-full animate-spin mr-2"></div>
                 Cargando registros reales de la cola de enriquecimiento...
               </td>
             </tr>
-            <tr v-else-if="filteredRecords.length === 0">
-              <td colspan="7" class="text-center py-12 text-slate-500 text-xs">
-                No hay publicaciones registradas en la cola de monitoreo actualmente.
+            <tr v-else-if="records.length === 0">
+              <td colspan="8" class="text-center py-12 text-slate-500 text-xs">
+                <p class="mb-3 text-slate-600 font-medium">No hay publicaciones registradas en la cola de monitoreo actualmente.</p>
+                <button
+                  @click="scanAndPopulateMissing"
+                  :disabled="scanningMissing"
+                  class="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-white rounded-lg shadow-sm hover:opacity-95 transition-all cursor-pointer disabled:opacity-50"
+                  style="background: #1565C0"
+                >
+                  <div v-if="scanningMissing" class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  <RefreshCw v-else :size="14" />
+                  <span>{{ scanningMissing ? 'Escaneando DSpace...' : 'Escanear DSpace y Guardar en Cola' }}</span>
+                </button>
               </td>
             </tr>
             <tr
@@ -132,7 +155,17 @@
               :key="row.id"
               class="border-b border-gray-50 hover:bg-gray-50/50 transition-colors"
             >
-              <td class="px-4 py-3.5 text-xs font-mono font-medium text-[#1565C0]">#{{ row.id }}</td>
+              <td class="px-4 py-3.5 text-xs font-mono font-medium text-[#1565C0] whitespace-nowrap">#{{ row.id }}</td>
+              <td class="px-4 py-3.5 max-w-[190px] whitespace-nowrap">
+                <span
+                  v-if="row.uuid"
+                  class="text-[11px] font-mono text-slate-700 bg-slate-100 hover:bg-slate-200 px-2 py-0.5 rounded border border-slate-200 truncate inline-block max-w-[170px] select-all cursor-copy transition-colors"
+                  :title="`UUID DSpace: ${row.uuid}`"
+                >
+                  {{ row.uuid }}
+                </span>
+                <span v-else class="text-[11px] text-slate-400 font-mono italic">Sin UUID</span>
+              </td>
               <td class="px-4 py-3.5 max-w-[220px]">
                 <p class="text-xs font-medium text-[#1a2332] truncate" :title="row.title">{{ row.title }}</p>
                 <p class="text-[10px] font-mono text-[#6b7a90] truncate">DOI: {{ row.doi || 'N/A' }}</p>
@@ -140,8 +173,17 @@
               <td class="px-4 py-3.5 max-w-[170px]">
                 <p class="text-xs text-[#1a2332] truncate">{{ row.comunidad }}</p>
               </td>
-              <td class="px-4 py-3.5">
-                <span class="text-xs font-medium px-2 py-0.5 bg-blue-50 text-blue-700 rounded">{{ row.campo }}</span>
+              <td class="px-4 py-3.5 max-w-[240px]">
+                <div class="flex flex-wrap gap-1">
+                  <span
+                    v-for="(f, fIdx) in formatFalencias(row.campo)"
+                    :key="fIdx"
+                    :class="getFalenciaBadgeClass(f)"
+                    class="text-[10px] font-semibold px-2 py-0.5 rounded shadow-2xs whitespace-nowrap"
+                  >
+                    {{ f }}
+                  </span>
+                </div>
               </td>
               <td class="px-4 py-3.5 whitespace-nowrap">
                 <div class="flex items-center gap-2">
@@ -196,7 +238,7 @@
       <div class="px-4 py-3.5 border-t border-gray-100 flex flex-col sm:flex-row items-center justify-between gap-3 bg-slate-50/50">
         <div class="flex items-center gap-3 text-xs text-[#6b7a90]">
           <span>
-            Mostrando <strong>{{ pageStart }}-{{ pageEnd }}</strong> de <strong>{{ filteredRecords.length.toLocaleString('es-CL') }}</strong> registros
+            Mostrando <strong>{{ pageStart }}-{{ pageEnd }}</strong> de <strong>{{ totalFilteredRecords.toLocaleString('es-CL') }}</strong> registros
           </span>
           <span class="text-gray-300">|</span>
           <div class="flex items-center gap-1.5">
@@ -204,7 +246,6 @@
             <select
               v-model="pageSize"
               class="px-2 py-1 text-xs border border-gray-200 rounded-lg bg-white text-[#1a2332] focus:outline-none focus:ring-1 focus:ring-[#00aea7] cursor-pointer"
-              @change="currentPage = 1"
             >
               <option :value="10">10 por pág.</option>
               <option :value="15">15 por pág.</option>
@@ -268,7 +309,10 @@
                 Detalles del Registro
                 <Badge :color="selectedRecord.estado">{{ selectedRecord.estado }}</Badge>
               </h3>
-              <p class="text-xs text-slate-500">Repositorio Institucional DSpace-CRIS USACH</p>
+              <p class="text-xs text-slate-500">
+                Repositorio Institucional DSpace-CRIS USACH
+                <span v-if="selectedRecord.uuid" class="ml-1.5 font-mono text-slate-400">· UUID: {{ selectedRecord.uuid }}</span>
+              </p>
             </div>
           </div>
           <button
@@ -286,10 +330,10 @@
               <span class="text-[11px] font-semibold uppercase tracking-wider text-slate-400 block mb-1">Título Científico</span>
               <p class="text-sm font-semibold text-slate-800 leading-snug">{{ selectedRecord.title }}</p>
             </div>
-            <div class="grid grid-cols-3 gap-4 pt-2 border-t border-slate-200/60">
+            <div class="grid grid-cols-4 gap-3 pt-2 border-t border-slate-200/60">
               <div>
                 <span class="text-[10px] font-medium text-slate-400 uppercase block">Autor Principal</span>
-                <span class="text-xs font-semibold text-slate-700">{{ selectedRecord.autor }}</span>
+                <span class="text-xs font-semibold text-slate-700 truncate block">{{ selectedRecord.autor }}</span>
               </div>
               <div>
                 <span class="text-[10px] font-medium text-slate-400 uppercase block">Comunidad / Facultad</span>
@@ -297,7 +341,11 @@
               </div>
               <div>
                 <span class="text-[10px] font-medium text-slate-400 uppercase block">DOI Registrado</span>
-                <span class="text-xs font-mono font-medium text-[#1565C0] truncate block">{{ selectedRecord.doi }}</span>
+                <span class="text-xs font-mono font-medium text-[#1565C0] truncate block">{{ selectedRecord.doi || 'N/A' }}</span>
+              </div>
+              <div>
+                <span class="text-[10px] font-medium text-slate-400 uppercase block">UUID DSpace</span>
+                <span class="text-xs font-mono font-medium text-slate-700 truncate block select-all cursor-copy" :title="selectedRecord.uuid">{{ selectedRecord.uuid || 'N/A' }}</span>
               </div>
             </div>
           </div>
@@ -305,9 +353,18 @@
           <!-- Metadatos Faltantes y Estado del Ciclo de Vida -->
           <div class="grid grid-cols-2 gap-4">
             <div class="p-4 rounded-xl border border-orange-100 bg-orange-50/30">
-              <span class="text-xs font-semibold text-orange-900 block mb-1">Campo Faltante Identificado</span>
-              <p class="text-sm font-bold text-orange-700">{{ selectedRecord.campo }}</p>
-              <p class="text-[11px] text-orange-600/80 mt-1">Requiere recuperación externa o clasificación con LLM.</p>
+              <span class="text-xs font-semibold text-orange-900 block mb-1">Falencias Detectadas</span>
+              <div class="flex flex-wrap gap-1.5 mt-1">
+                <span
+                  v-for="(f, fIdx) in formatFalencias(selectedRecord.campo)"
+                  :key="fIdx"
+                  :class="getFalenciaBadgeClass(f)"
+                  class="text-xs font-semibold px-2 py-0.5 rounded shadow-2xs"
+                >
+                  {{ f }}
+                </span>
+              </div>
+              <p class="text-[11px] text-orange-600/80 mt-2">Requiere recuperación externa o clasificación con LLM.</p>
             </div>
             <div class="p-4 rounded-xl border border-teal-100 bg-teal-50/30">
               <span class="text-xs font-semibold text-teal-900 block mb-1">Completitud del Registro</span>
@@ -322,25 +379,63 @@
           </div>
 
           <!-- Metadatos Enriquecidos Recuperados por el Agente -->
-          <div v-if="selectedRecord.abstractEnriquecido || selectedRecord.estado === 'Completado' || (selectedRecord.palabrasClave && selectedRecord.palabrasClave.length > 0)" class="space-y-3 p-4 rounded-xl border border-emerald-100 bg-emerald-50/30">
+          <div v-if="selectedRecord.abstractEnriquecido || selectedRecord.estado === 'Completado' || (selectedRecord.palabrasClave && selectedRecord.palabrasClave.length > 0) || selectedRecord.metadatosRecuperados" class="space-y-3 p-4 rounded-xl border border-emerald-100 bg-emerald-50/30">
             <div class="flex items-center justify-between">
               <span class="text-xs font-bold text-emerald-900 flex items-center gap-1.5">
-                <Sparkles :size="14" class="text-emerald-600" /> Metadatos Enriquecidos por el Agente
+                <Sparkles :size="14" class="text-emerald-600" /> Metadatos Enriquecidos / Recuperados
               </span>
               <span class="text-[10px] font-medium px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800">
                 {{ selectedRecord.fuente || 'Fuentes científicas validadas' }}
               </span>
             </div>
-            <div v-if="selectedRecord.abstractEnriquecido" class="bg-white p-3 rounded-lg border border-emerald-100 text-xs text-slate-700 leading-relaxed max-h-36 overflow-y-auto">
+            
+            <!-- Abstract -->
+            <div v-if="selectedRecord.abstractEnriquecido || selectedRecord.metadatosRecuperados?.abstract" class="bg-white p-3 rounded-lg border border-emerald-100 text-xs text-slate-700 leading-relaxed max-h-36 overflow-y-auto">
               <span class="text-[10px] uppercase font-bold text-slate-400 block mb-1">Resumen / Abstract Recuperado:</span>
-              {{ selectedRecord.abstractEnriquecido }}
+              {{ selectedRecord.abstractEnriquecido || selectedRecord.metadatosRecuperados?.abstract }}
             </div>
-            <div v-if="selectedRecord.palabrasClave && selectedRecord.palabrasClave.length > 0" class="pt-1">
+
+            <!-- Palabras Clave -->
+            <div v-if="(selectedRecord.palabrasClave && selectedRecord.palabrasClave.length > 0) || (selectedRecord.metadatosRecuperados?.keywords && selectedRecord.metadatosRecuperados.keywords.length > 0)" class="pt-1">
               <span class="text-[10px] uppercase font-bold text-slate-400 block mb-1">Palabras Clave Asociadas:</span>
               <div class="flex flex-wrap gap-1.5">
-                <span v-for="kw in selectedRecord.palabrasClave" :key="kw" class="px-2 py-0.5 text-[11px] font-medium bg-white text-emerald-800 border border-emerald-200 rounded-md shadow-xs">
+                <span v-for="kw in (selectedRecord.palabrasClave?.length ? selectedRecord.palabrasClave : selectedRecord.metadatosRecuperados?.keywords || [])" :key="kw" class="px-2 py-0.5 text-[11px] font-medium bg-white text-emerald-800 border border-emerald-200 rounded-md shadow-xs">
                   {{ kw }}
                 </span>
+              </div>
+            </div>
+
+            <!-- Financiamiento, Derechos de Acceso & Licencia -->
+            <div v-if="(selectedRecord.fuenteFinanciamiento && selectedRecord.fuenteFinanciamiento.length > 0) || selectedRecord.metadatosRecuperados?.funding || selectedRecord.derechosAcceso || selectedRecord.metadatosRecuperados?.access_rights || selectedRecord.licencia || selectedRecord.metadatosRecuperados?.license" class="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1">
+              <div v-if="(selectedRecord.fuenteFinanciamiento && selectedRecord.fuenteFinanciamiento.length > 0) || selectedRecord.metadatosRecuperados?.funding" class="bg-white p-2.5 rounded-lg border border-emerald-100 text-xs">
+                <span class="text-[10px] uppercase font-bold text-slate-400 block mb-1">Fuente de Financiamiento:</span>
+                <div class="flex flex-wrap gap-1">
+                  <span v-for="f in (selectedRecord.fuenteFinanciamiento?.length ? selectedRecord.fuenteFinanciamiento : (Array.isArray(selectedRecord.metadatosRecuperados?.funding) ? selectedRecord.metadatosRecuperados.funding : [selectedRecord.metadatosRecuperados?.funding]))" :key="f" class="px-1.5 py-0.5 text-[10px] font-medium bg-emerald-50 text-emerald-900 rounded">
+                    {{ f }}
+                  </span>
+                </div>
+              </div>
+              <div v-if="selectedRecord.derechosAcceso || selectedRecord.metadatosRecuperados?.access_rights" class="bg-white p-2.5 rounded-lg border border-emerald-100 text-xs">
+                <span class="text-[10px] uppercase font-bold text-slate-400 block mb-1">Derechos de Acceso:</span>
+                <span class="text-xs font-semibold text-slate-700 block">{{ selectedRecord.derechosAcceso || selectedRecord.metadatosRecuperados?.access_rights }}</span>
+              </div>
+              <div v-if="selectedRecord.licencia || selectedRecord.metadatosRecuperados?.license" class="bg-white p-2.5 rounded-lg border border-emerald-100 text-xs">
+                <span class="text-[10px] uppercase font-bold text-slate-400 block mb-1">Licencia de Uso:</span>
+                <span class="inline-block px-2 py-0.5 text-[11px] font-mono font-bold bg-indigo-50 text-indigo-700 border border-indigo-200 rounded uppercase">
+                  {{ selectedRecord.licencia || selectedRecord.metadatosRecuperados?.license }}
+                </span>
+              </div>
+            </div>
+
+            <!-- Áreas OCDE y ODS -->
+            <div v-if="selectedRecord.areaOcde || selectedRecord.areaOds || selectedRecord.metadatosRecuperados?.area_ocde || selectedRecord.metadatosRecuperados?.area_ods" class="grid grid-cols-2 gap-2 pt-1 border-t border-emerald-100/60 text-[11px]">
+              <div v-if="selectedRecord.areaOcde || selectedRecord.metadatosRecuperados?.area_ocde">
+                <span class="text-[10px] uppercase font-bold text-slate-400 block">Área OCDE:</span>
+                <span class="text-slate-700 font-medium">{{ selectedRecord.areaOcde || selectedRecord.metadatosRecuperados?.area_ocde }}</span>
+              </div>
+              <div v-if="selectedRecord.areaOds || selectedRecord.metadatosRecuperados?.area_ods">
+                <span class="text-[10px] uppercase font-bold text-slate-400 block">Objetivo ODS:</span>
+                <span class="text-slate-700 font-medium">{{ selectedRecord.areaOds || selectedRecord.metadatosRecuperados?.area_ods }}</span>
               </div>
             </div>
           </div>
@@ -379,7 +474,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
-import { Search, Zap, Download, Filter, ChevronDown, Eye, X, Sparkles, Check } from 'lucide-vue-next'
+import { Search, Zap, Download, Filter, ChevronDown, Eye, X, Sparkles, Check, RefreshCw } from 'lucide-vue-next'
 import Card from '../components/common/Card.vue'
 import Badge from '../components/common/Badge.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
@@ -391,11 +486,13 @@ const selectedStatuses = ref<string[]>([])
 const statusDropdownOpen = ref(false)
 const selectedRecord = ref<MonitoreoRecord | null>(null)
 const runningBatch = ref(false)
+const scanningMissing = ref(false)
 const loading = ref(true)
 const enrichingIds = ref<Record<string, boolean>>({})
 
 const currentPage = ref(1)
 const pageSize = ref(15)
+const totalFilteredRecords = ref(0)
 
 const totalDetectados = ref(0)
 const pendientesCount = ref(0)
@@ -411,70 +508,163 @@ const stats = computed(() => [
 
 const records = ref<MonitoreoRecord[]>([])
 
+const formatFalencias = (campo: string): string[] => {
+  if (!campo) return ['Metadatos faltantes']
+  const rawParts = campo.split(',').map(s => s.trim()).filter(Boolean)
+  const dict: Record<string, string> = {
+    'SIN_ABSTRACT_CON_DOI': 'Sin resumen (con DOI)',
+    'SIN_DOI_NI_ABSTRACT': 'Sin DOI ni resumen',
+    'SIN_ABSTRACT': 'Sin resumen',
+    'SIN_DOI': 'Sin DOI',
+    'SIN_PALABRAS_CLAVE': 'Sin palabras clave',
+    'SIN_FINANCIAMIENTO': 'Sin financiamiento',
+    'SIN_DERECHOS_ACCESO': 'Sin derechos de acceso',
+    'SIN_LICENCIA': 'Sin licencia',
+    'SIN_TITULO': 'Sin título',
+  }
+  return rawParts.map(p => dict[p] || p.replace(/_/g, ' '))
+}
+
+const getFalenciaBadgeClass = (falencia: string): string => {
+  const f = falencia.toLowerCase()
+  if (f.includes('resumen') || f.includes('abstract')) return 'bg-amber-50 text-amber-800 border border-amber-200'
+  if (f.includes('doi')) return 'bg-rose-50 text-rose-800 border border-rose-200'
+  if (f.includes('clave') || f.includes('keyword') || f.includes('subject')) return 'bg-blue-50 text-blue-800 border border-blue-200'
+  if (f.includes('financiamiento') || f.includes('funding')) return 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+  if (f.includes('derechos') || f.includes('acceso') || f.includes('rights')) return 'bg-purple-50 text-purple-800 border border-purple-200'
+  if (f.includes('licencia') || f.includes('license')) return 'bg-indigo-50 text-indigo-800 border border-indigo-200'
+  return 'bg-slate-100 text-slate-700 border border-slate-200'
+}
+
+const getBackendEstadoFilter = (): string | undefined => {
+  if (selectedStatuses.value.length === 0) return undefined
+  const mapStatus: Record<string, string[]> = {
+    'Pendiente': ['PENDIENTE'],
+    'En proceso': ['EN_PROCESO'],
+    'Completado': ['ENRIQUECIDO', 'SINCRONIZADO_DSPACE', 'COMPLETO']
+  }
+  const backendStates: string[] = []
+  for (const s of selectedStatuses.value) {
+    if (mapStatus[s]) backendStates.push(...mapStatus[s])
+  }
+  return backendStates.length > 0 ? backendStates.join(',') : undefined
+}
+
 const loadRealQueue = async () => {
   loading.value = true
   try {
-    const [queueRes, statsRes, proposals] = await Promise.all([
-      proposalService.getQueue({ page: 0, size: 5000 }),
-      proposalService.getQueueStats(),
-      proposalService.listProposals()
+    const backendEstado = getBackendEstadoFilter()
+    const queryParams: any = {
+      page: currentPage.value - 1,
+      size: pageSize.value
+    }
+    if (search.value.trim()) {
+      queryParams.q = search.value.trim()
+    }
+    if (backendEstado) {
+      queryParams.estado = backendEstado
+    }
+
+    const [queueRes, statsRes] = await Promise.all([
+      proposalService.getQueue(queryParams),
+      proposalService.getQueueStats()
     ])
 
     const porEstado = statsRes?.por_estado || {}
-    if (statsRes?.total_en_cola || (queueRes?.items && queueRes.items.length > 0)) {
-      totalDetectados.value = statsRes?.total_en_cola || queueRes?.total || (queueRes?.items ? queueRes.items.length : 0)
-      pendientesCount.value = porEstado['PENDIENTE'] || 0
-      enProcesoCount.value = porEstado['EN_PROCESO'] || 0
-      completadosCount.value = (porEstado['ENRIQUECIDO'] || 0) + (porEstado['SINCRONIZADO_DSPACE'] || 0)
-    } else {
-      totalDetectados.value = proposals.length
-      pendientesCount.value = proposals.filter((p: any) => p.status === 'DETECTED' || p.status === 'PENDING').length
-      enProcesoCount.value = proposals.filter((p: any) => p.status === 'ENRICHING' || p.status === 'VALIDATING').length
-      completadosCount.value = proposals.filter((p: any) => p.status === 'APPROVED' || p.status === 'LOADED_TO_DSPACE').length
-    }
+    totalDetectados.value = statsRes?.total_en_cola ?? 0
+    pendientesCount.value = porEstado['PENDIENTE'] || 0
+    enProcesoCount.value = porEstado['EN_PROCESO'] || 0
+    completadosCount.value = (porEstado['ENRIQUECIDO'] || 0) + (porEstado['SINCRONIZADO_DSPACE'] || 0) + (porEstado['COMPLETO'] || 0)
+
+    totalFilteredRecords.value = queueRes?.total || 0
 
     const mapped: MonitoreoRecord[] = []
 
     if (queueRes?.items && queueRes.items.length > 0) {
       for (const item of queueRes.items) {
+        const uuidVal = String(item.dspace_uuid || item.uuid_dspace || item.uuid || (typeof item.id === 'string' && item.id.includes('-') ? item.id : ''))
+        const recMeta = item.metadatos_recuperados || {}
+        
+        // Extraer palabras clave
+        let kws: string[] = []
+        if (Array.isArray(item.palabras_clave) && item.palabras_clave.length > 0) {
+          kws = item.palabras_clave
+        } else if (Array.isArray(recMeta.keywords) && recMeta.keywords.length > 0) {
+          kws = recMeta.keywords
+        } else if (typeof item.palabras_clave === 'string') {
+          try { kws = JSON.parse(item.palabras_clave || '[]') } catch { kws = [] }
+        }
+
+        // Extraer financiamiento
+        let fundingArr: string[] = []
+        if (Array.isArray(item.fuente_financiamiento)) {
+          fundingArr = item.fuente_financiamiento
+        } else if (Array.isArray(recMeta.funding)) {
+          fundingArr = recMeta.funding
+        } else if (typeof recMeta.funding === 'string') {
+          fundingArr = [recMeta.funding]
+        } else if (typeof item.fuente_financiamiento === 'string') {
+          fundingArr = [item.fuente_financiamiento]
+        }
+
         mapped.push({
           id: String(item.id || item.uuid_dspace || ''),
+          uuid: uuidVal,
           title: item.titulo || item.title || item.titulo_dspace || item.name || (item.doi ? `Publicación (DOI: ${item.doi})` : `Registro DSpace #${item.id || item.uuid_dspace}`),
           campo: item.tipo_falencia || 'Metadatos faltantes',
           fecha: item.created_at ? item.created_at.split('T')[0] : 'Hoy',
-          prioridad: item.tipo_falencia?.includes('AMBOS') ? 'Alta' : 'Media',
+          prioridad: item.tipo_falencia?.includes('AMBOS') || item.tipo_falencia?.includes(',') ? 'Alta' : 'Media',
           estado: item.estado === 'ENRIQUECIDO' || item.estado === 'SINCRONIZADO_DSPACE' || item.estado === 'COMPLETO' ? 'Completado' : item.estado === 'EN_PROCESO' ? 'En proceso' : 'Pendiente',
           completitud: item.estado === 'ENRIQUECIDO' || item.estado === 'COMPLETO' ? 95 : item.estado === 'EN_PROCESO' ? 70 : 45,
           completitudPre: 40,
           coleccion: item.coleccion || 'Artículos Científicos USACH',
           comunidad: item.comunidad || 'Facultad USACH',
           autor: item.autor || 'Investigador USACH',
-          doi: item.doi || '',
-          abstractEnriquecido: item.abstract_enriquecido,
-          palabrasClave: Array.isArray(item.palabras_clave) ? item.palabras_clave : typeof item.palabras_clave === 'string' ? JSON.parse(item.palabras_clave || '[]') : [],
-          fuente: item.fuente_enriquecimiento,
-          areaOcde: item.area_ocde,
-          areaOds: item.area_ods
+          doi: item.doi || recMeta.doi || '',
+          abstractEnriquecido: item.abstract_enriquecido || recMeta.abstract,
+          palabrasClave: kws,
+          fuente: item.fuente_enriquecimiento || (recMeta.sources ? (Array.isArray(recMeta.sources) ? recMeta.sources.join(', ') : String(recMeta.sources)) : undefined),
+          fuenteFinanciamiento: fundingArr.length > 0 ? fundingArr : undefined,
+          derechosAcceso: item.derechos_acceso || recMeta.access_rights,
+          licencia: item.licencia || recMeta.license,
+          areaOcde: item.area_ocde || recMeta.area_ocde,
+          areaOds: item.area_ods || recMeta.area_ods,
+          metadatosRecuperados: recMeta
         })
       }
-    } else if (proposals && proposals.length > 0) {
-      for (const p of proposals) {
-        mapped.push({
-          id: String(p.id || p.uuid_dspace || ''),
-          title: p.title || p.titulo || p.titulo_dspace || p.name || (p.doi ? `Publicación (DOI: ${p.doi})` : `Propuesta #${p.id}`),
-          campo: p.field_name || p.field || 'Metadato General',
-          fecha: p.created_at ? p.created_at.split('T')[0] : 'Hoy',
-          prioridad: 'Alta',
-          estado: p.status === 'APPROVED' ? 'Completado' : p.status === 'PENDING_CURATION' ? 'En proceso' : 'Pendiente',
-          completitud: p.status === 'APPROVED' ? 100 : 70,
-          completitudPre: 40,
-          coleccion: 'DSpace-CRIS',
-          comunidad: 'VRIIC',
-          autor: 'Investigador USACH',
-          doi: p.doi || '',
-          abstractEnriquecido: p.suggested_value || p.new_value,
-          fuente: p.source || p.best_source
-        })
+    } else if (totalFilteredRecords.value === 0 && !search.value.trim() && selectedStatuses.value.length === 0) {
+      // Fallback a propuestas v3 solo si la cola está vacía
+      const proposals = await proposalService.listProposals()
+      if (proposals && proposals.length > 0) {
+        totalDetectados.value = proposals.length
+        pendientesCount.value = proposals.filter((p: any) => p.status === 'DETECTED' || p.status === 'PENDING').length
+        enProcesoCount.value = proposals.filter((p: any) => p.status === 'ENRICHING' || p.status === 'VALIDATING').length
+        completadosCount.value = proposals.filter((p: any) => p.status === 'APPROVED' || p.status === 'LOADED_TO_DSPACE').length
+        totalFilteredRecords.value = proposals.length
+
+        const startIdx = (currentPage.value - 1) * pageSize.value
+        const pagedProposals = proposals.slice(startIdx, startIdx + pageSize.value)
+
+        for (const p of pagedProposals) {
+          const uuidVal = String(p.uuid_dspace || p.uuid || p.item_uuid || (typeof p.item_id === 'string' && p.item_id.includes('-') ? p.item_id : ''))
+          mapped.push({
+            id: String(p.id || p.uuid_dspace || ''),
+            uuid: uuidVal,
+            title: p.title || p.titulo || p.titulo_dspace || p.name || (p.doi ? `Publicación (DOI: ${p.doi})` : `Propuesta #${p.id}`),
+            campo: p.field_name || p.field || 'Metadato General',
+            fecha: p.created_at ? p.created_at.split('T')[0] : 'Hoy',
+            prioridad: 'Alta',
+            estado: p.status === 'APPROVED' ? 'Completado' : p.status === 'PENDING_CURATION' ? 'En proceso' : 'Pendiente',
+            completitud: p.status === 'APPROVED' ? 100 : 70,
+            completitudPre: 40,
+            coleccion: 'DSpace-CRIS',
+            comunidad: 'VRIIC',
+            autor: 'Investigador USACH',
+            doi: p.doi || '',
+            abstractEnriquecido: p.suggested_value || p.new_value,
+            fuente: p.source || p.best_source
+          })
+        }
       }
     }
 
@@ -490,33 +680,17 @@ onMounted(() => {
   loadRealQueue()
 })
 
-const filteredRecords = computed(() => {
-  return records.value.filter((r) => {
-    const s = search.value.toLowerCase()
-    const matchSearch =
-      r.title.toLowerCase().includes(s) ||
-      r.id.includes(s) ||
-      r.comunidad.toLowerCase().includes(s) ||
-      r.autor.toLowerCase().includes(s) ||
-      (r.doi && r.doi.toLowerCase().includes(s))
-    const matchFilter = selectedStatuses.value.length === 0 || selectedStatuses.value.includes(r.estado)
-    return matchSearch && matchFilter
-  })
-})
+const totalPages = computed(() => Math.max(1, Math.ceil(totalFilteredRecords.value / pageSize.value)))
 
-const totalPages = computed(() => Math.max(1, Math.ceil(filteredRecords.value.length / pageSize.value)))
+const paginatedRecords = computed(() => records.value)
 
-const paginatedRecords = computed(() => {
-  const start = (currentPage.value - 1) * pageSize.value
-  return filteredRecords.value.slice(start, start + pageSize.value)
-})
-
-const pageStart = computed(() => (filteredRecords.value.length === 0 ? 0 : (currentPage.value - 1) * pageSize.value + 1))
-const pageEnd = computed(() => Math.min(currentPage.value * pageSize.value, filteredRecords.value.length))
+const pageStart = computed(() => (totalFilteredRecords.value === 0 ? 0 : (currentPage.value - 1) * pageSize.value + 1))
+const pageEnd = computed(() => Math.min(currentPage.value * pageSize.value, totalFilteredRecords.value))
 
 const goToPage = (p: number) => {
-  if (p >= 1 && p <= totalPages.value) {
+  if (p >= 1 && p <= totalPages.value && p !== currentPage.value) {
     currentPage.value = p
+    loadRealQueue()
   }
 }
 
@@ -541,9 +715,24 @@ const visiblePages = computed(() => {
   return pages
 })
 
-watch([search, selectedStatuses], () => {
-  currentPage.value = 1
+let searchDebounceTimer: any = null
+watch(search, () => {
+  clearTimeout(searchDebounceTimer)
+  searchDebounceTimer = setTimeout(() => {
+    currentPage.value = 1
+    loadRealQueue()
+  }, 350)
 })
+
+watch(pageSize, () => {
+  currentPage.value = 1
+  loadRealQueue()
+})
+
+watch(selectedStatuses, () => {
+  currentPage.value = 1
+  loadRealQueue()
+}, { deep: true })
 
 const toggleStatus = (opt: string) => {
   if (selectedStatuses.value.includes(opt)) {
@@ -580,9 +769,7 @@ const runAgentSingle = async (record: MonitoreoRecord | null) => {
   if (!record) return
   enrichingIds.value[record.id] = true
   try {
-    await proposalService.detectMissing([
-      { item_id: record.id, title: record.title, missing_fields: [record.campo], doi: record.doi }
-    ])
+    await proposalService.enrichQueueItem(record.id || record.uuid || '')
     record.estado = 'Completado'
     record.completitud = 95
     completadosCount.value++
@@ -604,6 +791,38 @@ const runAgentSingle = async (record: MonitoreoRecord | null) => {
 
 const exportSummary = () => {
   alert('Generando exportación de reporte de monitoreo DSpace-CRIS...')
+}
+
+const scanAndPopulateMissing = async () => {
+  scanningMissing.value = true
+  try {
+    const res = await proposalService.getCountMissing(true)
+    if (res) {
+      const guardado = res.db_guardado
+      const nuevos = guardado?.nuevos_en_cola ?? 0
+      const existentes = guardado?.ya_existentes_en_cola ?? 0
+      const totalCandidatos = guardado?.total_candidatos_detectados || ((res.total_sin_abstract || 0) + (res.total_sin_doi || 0))
+      
+      let mensaje = `Escaneo de DSpace-CRIS y población de cola finalizado con éxito.\n\n`
+      mensaje += `• Registros evaluados en repositorio: ${res.total_revisados?.toLocaleString('es-CL') || '0'}\n`
+      mensaje += `• Publicaciones con campos incompletos detectadas: ${totalCandidatos}\n`
+      if (guardado) {
+        mensaje += `• Nuevos elementos guardados en la cola de enriquecimiento: ${nuevos}\n`
+        mensaje += `• Elementos que ya existían en la cola: ${existentes}`
+      }
+      alert(mensaje)
+
+      // Actualizar automáticamente la tabla y contadores de la vista
+      await loadRealQueue()
+    } else {
+      alert('El servicio de escaneo no retornó datos.')
+    }
+  } catch (err: any) {
+    console.error('Error al ejecutar count-missing con save_to_db:', err)
+    alert(`Error al escanear DSpace y poblar la cola: ${err?.response?.data?.detail || err.message || err}`)
+  } finally {
+    scanningMissing.value = false
+  }
 }
 </script>
 

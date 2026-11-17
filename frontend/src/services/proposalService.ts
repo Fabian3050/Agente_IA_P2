@@ -50,12 +50,16 @@ export const proposalService = {
     }
   },
 
-  async getCountMissing(saveToDb: boolean = false): Promise<any> {
+  async getCountMissing(saveToDb: boolean = false, useCache: boolean = true): Promise<any> {
     try {
-      const res = await ms4Client.get<any>('/dspace/count-missing', { params: { save_to_db: saveToDb } })
+      const res = await ms4Client.get<any>('/dspace/count-missing', {
+        params: { save_to_db: saveToDb, use_cache: useCache },
+        timeout: 120000
+      })
       return res.data
-    } catch {
-      return null
+    } catch (err: any) {
+      console.error('Error en getCountMissing:', err)
+      throw err
     }
   },
 

@@ -6,8 +6,14 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 from sqlalchemy.orm import Session
 
-from models import DSpaceEnrichmentQueue
-from clients.ms_clients import MS1Client, MS2Client
+try:
+    from models import DSpaceEnrichmentQueue
+    from clients.ms_clients import MS1Client, MS2Client
+    from services.dspace_service import normalize_license
+except ImportError:
+    from services.ms4_orchestrator.models import DSpaceEnrichmentQueue
+    from services.ms4_orchestrator.clients.ms_clients import MS1Client, MS2Client
+    from services.ms4_orchestrator.services.dspace_service import normalize_license
 
 class EnrichmentService:
     """
@@ -34,7 +40,8 @@ class EnrichmentService:
         abstract_encontrado: Optional[str] = None
         keywords_acumuladas = set()
         financiamiento_acumulado = set()
-        derechos_acceso: Optional[str] = None
+        derechos_acceso: Optional[str] = getattr(item, "derechos_acceso", None)
+        licencia_encontrada: Optional[str] = getattr(item, "licencia", None)
         doi_encontrado: Optional[str] = item.doi
         raw_responses: List[Dict[str, Any]] = []
 
@@ -59,6 +66,10 @@ class EnrichmentService:
                     financiamiento_acumulado.add(str(consolidated["funding_agency"]).strip())
                 if consolidated.get("oa_status"):
                     derechos_acceso = str(consolidated["oa_status"]).strip()
+                if consolidated.get("license"):
+                    licencia_encontrada = normalize_license(str(consolidated["license"]).strip())
+                elif res_ms1.get("license"):
+                    licencia_encontrada = normalize_license(str(res_ms1["license"]).strip())
                 if consolidated.get("doi") and not item.doi:
                     doi_encontrado = str(consolidated["doi"]).strip()
                 if best_source:
@@ -90,15 +101,40 @@ class EnrichmentService:
             if abstract_encontrado:
                 item.abstract_enriquecido = abstract_encontrado
             if keywords_acumuladas:
-                item.palabras_clave = list(keywords_acumuladas)
+                item.palabras_clave = list(sorted(keywords_acumuladas))
             if financiamiento_acumulado:
-                item.fuente_financiamiento = list(financiamiento_acumulado)
+                item.fuente_financiamiento = list(sorted(financiamiento_acumulado))
             if derechos_acceso:
                 item.derechos_acceso = derechos_acceso
+            if licencia_encontrada:
+                item.licencia = licencia_encontrada
             if doi_encontrado and not item.doi:
                 item.doi = doi_encontrado
             if fuentes_utilizadas:
                 item.fuente_enriquecimiento = ", ".join(sorted(fuentes_utilizadas))
+
+            # Incorporar metadatos enriquecidos en el campo 'metadatos_recuperados' de dspace_enrichment_queue
+            metadatos_recuperados_payload = {
+                "abstract": item.abstract_enriquecido,
+                "keywords": item.palabras_clave,
+                "funding": item.fuente_financiamiento,
+                "access_rights": item.derechos_acceso,
+                "license": getattr(item, "licencia", None) or licencia_encontrada,
+                "doi": item.doi,
+                "sources": list(sorted(fuentes_utilizadas)) if fuentes_utilizadas else [],
+                "area_ocde": item.area_ocde,
+                "area_ods": item.area_ods,
+                "recovered_at": datetime.utcnow().isoformat()
+            }
+            if 'res_ms1' in locals() and isinstance(res_ms1, dict):
+                if res_ms1.get("best_source"):
+                    metadatos_recuperados_payload["best_source"] = res_ms1.get("best_source")
+                if res_ms1.get("candidate_matches"):
+                    metadatos_recuperados_payload["candidate_matches"] = res_ms1.get("candidate_matches")
+                elif res_ms1.get("consolidated"):
+                    metadatos_recuperados_payload["consolidated"] = res_ms1.get("consolidated")
+
+            item.metadatos_recuperados = metadatos_recuperados_payload
 
             if abstract_encontrado or keywords_acumuladas or item.area_ocde or item.area_ods or item.abstract_enriquecido:
                 item.estado = "ENRIQUECIDO"
@@ -128,8 +164,10 @@ class EnrichmentService:
             "palabras_clave": item.palabras_clave,
             "fuente_financiamiento": item.fuente_financiamiento,
             "derechos_acceso": item.derechos_acceso,
+            "licencia": getattr(item, "licencia", None),
             "area_ocde": item.area_ocde,
             "area_ods": item.area_ods,
+            "metadatos_recuperados": item.metadatos_recuperados,
             "mensaje_error": item.mensaje_error
         }
 

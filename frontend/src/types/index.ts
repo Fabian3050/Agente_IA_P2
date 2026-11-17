@@ -42,6 +42,7 @@ export interface User {
 
 export interface MonitoreoRecord {
   id: string
+  uuid?: string
   title: string
   campo: string
   fecha: string
@@ -57,8 +58,12 @@ export interface MonitoreoRecord {
   abstractEnriquecido?: string
   palabrasClave?: string[]
   fuente?: string
+  fuenteFinanciamiento?: string[]
+  derechosAcceso?: string
+  licencia?: string
   areaOcde?: any
   areaOds?: any
+  metadatosRecuperados?: any
 }
 
 export interface MetadataProposal {

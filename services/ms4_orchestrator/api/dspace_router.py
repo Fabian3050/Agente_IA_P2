@@ -1,8 +1,21 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from typing import Optional
-from services.dspace_service import DSpaceService
-from common.database import get_db
+
+try:
+    from services.dspace_service import DSpaceService
+except ImportError:
+    from services.ms4_orchestrator.services.dspace_service import DSpaceService
+
+try:
+    from common.database import get_db
+except ImportError:
+    from services.common.database import get_db
+
+try:
+    from models import DSpaceMetricsHistory, DSpaceEnrichmentQueue
+except ImportError:
+    from services.ms4_orchestrator.models import DSpaceMetricsHistory, DSpaceEnrichmentQueue
 
 router = APIRouter(
     prefix="/dspace",
@@ -17,44 +30,70 @@ def get_dspace_service():
 async def get_items(
     page: int = Query(0, description="Número de página (índice base 0)"),
     size: int = Query(20, description="Cantidad de registros de metadatos por página"),
+    use_cache: bool = Query(True, description="Usar caché local en disco para no saturar la API y consumir datos más rápido"),
     dspace_service: DSpaceService = Depends(get_dspace_service)
 ):
     """
     Obtiene la lista de publicaciones desde DSpace.
     Devuelve estrictamente los metadatos de los registros, no archivos adjuntos (PDFs).
+    Implementa caché en disco para consumir datos más rápido.
     """
     try:
-        return await dspace_service.get_all_items(page=page, size=size)
+        return await dspace_service.get_all_items(page=page, size=size, use_cache=use_cache)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error comunicándose con DSpace: {str(e)}")
 
 @router.get("/items/{item_id}")
 async def get_item_metadata(
     item_id: str,
+    use_cache: bool = Query(True, description="Usar caché local para respuesta inmediata"),
     dspace_service: DSpaceService = Depends(get_dspace_service)
 ):
     """
     Obtiene los metadatos completos de un registro individual en base a su UUID.
+    Aprovecha la caché local para obtener el registro instantáneamente.
     """
     try:
-        return await dspace_service.get_metadata(item_id)
+        return await dspace_service.get_metadata(item_id, use_cache=use_cache)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error obteniendo el ítem {item_id}: {str(e)}")
 
 @router.get("/count-missing")
 async def count_missing(
     save_to_db: bool = Query(False, description="Guardar snapshot de métricas en histórico y poblar la cola de enriquecimiento en BD"),
+    use_cache: bool = Query(True, description="Usar caché local en disco para acelerar el escaneo"),
     dspace_service: DSpaceService = Depends(get_dspace_service),
     db: Session = Depends(get_db)
 ):
     """
     Cuenta los items que no tienen abstract ni DOI dentro de valid_resource_types.
     Opcionalmente guarda el histórico de métricas y la cola de enriquecimiento en la base de datos.
+    Aprovecha la caché local en disco para un procesamiento ultrarrápido.
     """
     try:
-        return await dspace_service.count_missing_metadata_optimized(save_to_db=save_to_db, db=db)
+        return await dspace_service.count_missing_metadata_optimized(save_to_db=save_to_db, db=db, use_cache=use_cache)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error contando items: {str(e)}")
+
+@router.get("/cache/stats")
+def get_cache_stats(
+    dspace_service: DSpaceService = Depends(get_dspace_service)
+):
+    """
+    Retorna métricas y estadísticas sobre los archivos y tamaño de la caché de DSpace en disco.
+    """
+    return dspace_service.get_cache_stats()
+
+@router.delete("/cache")
+def clear_cache(
+    clear_pages: bool = Query(True, description="Eliminar páginas cacheadas"),
+    clear_items: bool = Query(True, description="Eliminar ítems individuales cacheados"),
+    dspace_service: DSpaceService = Depends(get_dspace_service)
+):
+    """
+    Limpia los archivos de la caché en disco para forzar una consulta fresca a la API de DSpace.
+    """
+    return dspace_service.clear_cache(clear_pages=clear_pages, clear_items=clear_items)
 
 @router.get("/metrics-history")
 def get_metrics_history(
@@ -80,13 +119,16 @@ def get_enrichment_queue(
     """
     Retorna publicaciones en la cola de enriquecimiento con filtros y paginación para el dashboard.
     """
-    from models import DSpaceEnrichmentQueue
     from sqlalchemy import or_
     query = db.query(DSpaceEnrichmentQueue)
     if estado:
-        query = query.filter(DSpaceEnrichmentQueue.estado == estado)
+        if "," in estado:
+            estados_list = [e.strip() for e in estado.split(",") if e.strip()]
+            query = query.filter(DSpaceEnrichmentQueue.estado.in_(estados_list))
+        else:
+            query = query.filter(DSpaceEnrichmentQueue.estado == estado)
     if tipo_falencia:
-        query = query.filter(DSpaceEnrichmentQueue.tipo_falencia == tipo_falencia)
+        query = query.filter(DSpaceEnrichmentQueue.tipo_falencia.ilike(f"%{tipo_falencia}%"))
     if q:
         query = query.filter(
             or_(
@@ -118,8 +160,22 @@ def get_enrichment_queue(
                 "palabras_clave": i.palabras_clave,
                 "fuente_financiamiento": i.fuente_financiamiento,
                 "derechos_acceso": i.derechos_acceso,
+                "licencia": getattr(i, "licencia", None) or (i.metadatos_recuperados.get("license") if i.metadatos_recuperados else None),
                 "area_ocde": i.area_ocde,
                 "area_ods": i.area_ods,
+                "metadatos_recuperados": i.metadatos_recuperados or (
+                    {
+                        "abstract": i.abstract_enriquecido,
+                        "keywords": i.palabras_clave,
+                        "funding": i.fuente_financiamiento,
+                        "access_rights": i.derechos_acceso,
+                        "license": getattr(i, "licencia", None),
+                        "doi": i.doi,
+                        "sources": [i.fuente_enriquecimiento] if i.fuente_enriquecimiento else [],
+                        "area_ocde": i.area_ocde,
+                        "area_ods": i.area_ods,
+                    } if (i.abstract_enriquecido or i.palabras_clave or i.fuente_financiamiento or i.derechos_acceso or getattr(i, "licencia", None) or i.area_ocde or i.area_ods) else None
+                ),
                 "resumen_original": i.resumen_original,
                 "created_at": i.created_at.isoformat() if i.created_at else None,
                 "updated_at": i.updated_at.isoformat() if i.updated_at else None

@@ -15,6 +15,20 @@ from app.services.seed_service import run_full_seeding
 async def lifespan(app: FastAPI):
     # 1. Crear todas las tablas en la BD si no existen
     Base.metadata.create_all(bind=engine)
+    try:
+        from sqlalchemy import inspect, text
+        inspector = inspect(engine)
+        if "dspace_enrichment_queue" in inspector.get_table_names():
+            cols = [c["name"] for c in inspector.get_columns("dspace_enrichment_queue")]
+            with engine.connect() as conn:
+                if "licencia" not in cols:
+                    conn.execute(text("ALTER TABLE dspace_enrichment_queue ADD COLUMN licencia VARCHAR;"))
+                    conn.commit()
+                if "metadatos_recuperados" not in cols:
+                    conn.execute(text("ALTER TABLE dspace_enrichment_queue ADD COLUMN metadatos_recuperados JSON;"))
+                    conn.commit()
+    except Exception as e_col:
+        print(f"[App] Chequeo de columnas en dspace_enrichment_queue: {e_col}")
     
     # 2. Inicializar catálogos estandarizados (12 Estados, Fuentes, Roles y Categorías OCDE/ODS)
     db = SessionLocal()
