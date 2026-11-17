@@ -1,0 +1,137 @@
+# =============================================================================
+# Python Bytecode & Cache
+# =============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# =============================================================================
+# Entornos Virtuales (Python)
+# =============================================================================
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# =============================================================================
+# Node.js & Frontend (Vue / Vite / Tailwind)
+# =============================================================================
+node_modules/
+*/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.pnpm-debug.log*
+.npm/
+
+# Build artifacts de Frontend
+frontend/dist/
+frontend/dist-ssr/
+frontend/*.tsbuildinfo
+*.tsbuildinfo
+.vite/
+frontend/.vite/
+frontend/vite.config.js
+frontend/vite.config.d.ts
+
+# =============================================================================
+# Variables de Entorno y Secretos
+# =============================================================================
+.env
+.env.*
+!.env.example
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+secrets/*.txt
+!secrets/.gitkeep
+*.pem
+*.key
+*.cert
+*.crt
+
+# =============================================================================
+# Bases de Datos & Volúmenes de Persistencia Local
+# =============================================================================
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+postgres_data/
+pgdata/
+rabbitmq_data/
+ollama_data/
+
+# =============================================================================
+# Caches de Aplicación, Pruebas y Cobertura
+# =============================================================================
+cache_dspace/
+cache_dspace/*
+.cache/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.eslintcache/
+
+# =============================================================================
+# Logs y Archivos Temporales de Ejecución
+# =============================================================================
+*.log
+logs/
+*.pid
+*.seed
+*.pid.lock
+tmp/
+temp/
+exports/*.csv
+!exports/.gitkeep
+csv_exports/*.csv
+!csv_exports/.gitkeep
+
+# =============================================================================
+# Sistema Operativo y Editores
+# =============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/
+*.sublime-workspace
+*.sublime-project
+*.swp
+*.swo
+*~

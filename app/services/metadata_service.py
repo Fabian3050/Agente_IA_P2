@@ -1,0 +1,178 @@
+import asyncio
+from typing import List, Optional
+from app.models.metadata_model import MetadataResponse
+from app.clients.crossref_client import search_crossref, get_by_doi_crossref, get_doi_by_title_and_abstract_crossref
+from app.clients.openalex_client import OpenAlexClient
+import httpx
+from app.clients.semantic_scholar_client import search_semantic_scholar, get_by_doi_semantic_scholar, get_doi_by_title_and_abstract_semantic_scholar
+from app.clients.europe_pmc_client import search_europe_pmc, get_by_doi_europe_pmc, get_doi_by_title_and_abstract_europe_pmc
+from app.clients.unpaywall_client import search_unpaywall, get_by_doi_unpaywall
+
+class MetadataService:
+    def __init__(self):
+        self.openalex_client = OpenAlexClient(email="agente_ia@example.com")
+
+    async def _search_openalex_wrapper(self, query: str, limit: int) -> List[MetadataResponse]:
+        candidates = await self.openalex_client.search_candidates_by_title(title=query, limit=limit)
+        results = []
+        for c in candidates:
+            m = c["metadata"]
+            results.append(MetadataResponse(
+                title=m.title,
+                authors=m.authors,
+                doi=m.doi,
+                year=m.year,
+                source=m.source,
+                url=m.url,
+                abstract=m.abstract,
+                keywords=m.keywords,
+                funding_source=m.funding_source,
+                ods=m.ods,
+                derechos_acceso=m.derechos_acceso
+            ))
+        return results
+
+    async def _get_by_doi_openalex_wrapper(self, doi: str) -> Optional[MetadataResponse]:
+        async with httpx.AsyncClient() as client:
+            m = await self.openalex_client.get_by_doi(doi, client)
+        if m:
+            return MetadataResponse(
+                title=m.title,
+                authors=m.authors,
+                doi=m.doi,
+                year=m.year,
+                source=m.source,
+                url=m.url,
+                abstract=m.abstract,
+                keywords=m.keywords,
+                funding_source=m.funding_source,
+                ods=m.ods,
+                derechos_acceso=m.derechos_acceso
+            )
+        return None
+
+    async def _get_doi_by_title_and_abstract_openalex_wrapper(self, title: Optional[str], abstract: Optional[str]) -> Optional[str]:
+        return await self.openalex_client.get_doi_by_title_and_abstract(title=title, abstract=abstract)
+
+    async def search_metadata(self, query: str, source: Optional[str] = None, limit_per_source: int = 5) -> List[MetadataResponse]:
+        """
+        Busca metadatos. Si 'source' es especificado, busca solo en ese proveedor.
+        Si 'source' es None, busca en todos concurrentemente.
+        """
+        results = []
+        
+        if source:
+            source = source.lower()
+            if source == "crossref":
+                results.extend(await search_crossref(query, limit_per_source))
+            elif source == "openalex":
+                results.extend(await self._search_openalex_wrapper(query, limit_per_source))
+            elif source == "semanticscholar":
+                results.extend(await search_semantic_scholar(query, limit_per_source))
+            elif source == "europepmc":
+                results.extend(await search_europe_pmc(query, limit_per_source))
+            elif source == "unpaywall":
+                results.extend(await search_unpaywall(query, limit_per_source))
+        else:
+            # Búsqueda concurrente en todos los clientes
+            tasks = [
+                search_crossref(query, limit_per_source),
+                self._search_openalex_wrapper(query, limit_per_source),
+                search_semantic_scholar(query, limit_per_source),
+                search_europe_pmc(query, limit_per_source),
+                search_unpaywall(query, limit_per_source)
+            ]
+            
+            completed_tasks = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for task_result in completed_tasks:
+                if isinstance(task_result, list):
+                    results.extend(task_result)
+                else:
+                    # En caso de excepción no controlada en algún cliente
+                    print(f"Error en tarea concurrente: {task_result}")
+                    
+        return results
+
+    async def get_metadata_by_doi(self, doi: str, source: Optional[str] = None) -> List[MetadataResponse]:
+        """
+        Busca metadatos específicamente por DOI.
+        """
+        results = []
+        
+        if source:
+            source = source.lower()
+            if source == "crossref":
+                res = await get_by_doi_crossref(doi)
+                if res: results.append(res)
+            elif source == "openalex":
+                res = await self._get_by_doi_openalex_wrapper(doi)
+                if res: results.append(res)
+            elif source == "semanticscholar":
+                res = await get_by_doi_semantic_scholar(doi)
+                if res: results.append(res)
+            elif source == "europepmc":
+                res = await get_by_doi_europe_pmc(doi)
+                if res: results.append(res)
+            elif source == "unpaywall":
+                res = await get_by_doi_unpaywall(doi)
+                if res: results.append(res)
+        else:
+            tasks = [
+                get_by_doi_crossref(doi),
+                self._get_by_doi_openalex_wrapper(doi),
+                get_by_doi_semantic_scholar(doi),
+                get_by_doi_europe_pmc(doi),
+                get_by_doi_unpaywall(doi)
+            ]
+            
+            completed_tasks = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            for task_result in completed_tasks:
+                if isinstance(task_result, MetadataResponse):
+                    results.append(task_result)
+                elif isinstance(task_result, Exception):
+                    print(f"Error en tarea concurrente por DOI: {task_result}")
+                    
+        return results
+
+    async def get_doi_by_title_and_abstract(self, title: Optional[str] = None, abstract: Optional[str] = None, source: Optional[str] = None) -> Optional[str]:
+        """
+        Busca y retorna el DOI de un artículo dado su título y abstract.
+        Retorna el primer DOI encontrado.
+        """
+        if not title and not abstract:
+            return None
+            
+        if source:
+            source = source.lower()
+            if source == "crossref":
+                return await get_doi_by_title_and_abstract_crossref(title, abstract)
+            elif source == "openalex":
+                return await self._get_doi_by_title_and_abstract_openalex_wrapper(title, abstract)
+            elif source == "semanticscholar":
+                return await get_doi_by_title_and_abstract_semantic_scholar(title, abstract)
+            elif source == "europepmc":
+                return await get_doi_by_title_and_abstract_europe_pmc(title, abstract)
+            return None
+            
+        tasks = [
+            asyncio.create_task(get_doi_by_title_and_abstract_crossref(title, abstract)),
+            asyncio.create_task(self._get_doi_by_title_and_abstract_openalex_wrapper(title, abstract)),
+            asyncio.create_task(get_doi_by_title_and_abstract_semantic_scholar(title, abstract)),
+            asyncio.create_task(get_doi_by_title_and_abstract_europe_pmc(title, abstract))
+        ]
+        
+        for coro in asyncio.as_completed(tasks):
+            try:
+                doi = await coro
+                if doi:
+                    # Cancel remaining tasks if we found a DOI
+                    for task in tasks:
+                        if not task.done():
+                            task.cancel()
+                    return doi
+            except Exception as e:
+                print(f"Error in concurrent DOI search: {e}")
+                
+        return None
