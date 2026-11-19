@@ -50,6 +50,14 @@ export interface MonitoreoRecord {
   estado: ProposalState | string
   completitud: number
   completitudPre: number
+  completitudDetalle?: {
+    financiamiento: boolean
+    resumen: boolean
+    palabrasClave: boolean
+    areaOcde: boolean
+    areaOds: boolean
+    derechosAcceso: boolean
+  }
   coleccion: string
   comunidad: string
   autor: string

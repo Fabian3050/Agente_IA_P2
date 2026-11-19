@@ -186,7 +186,7 @@
                 </div>
               </td>
               <td class="px-4 py-3.5 whitespace-nowrap">
-                <div class="flex items-center gap-2">
+                <div class="flex items-center gap-2" :title="`${row.completitud}% - ${formatCompletitudDetalle(row)}`">
                   <div class="w-16 h-1.5 bg-gray-100 rounded-full overflow-hidden">
                     <div
                       class="h-full rounded-full transition-all"
@@ -297,7 +297,7 @@
       v-if="selectedRecord"
       class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
     >
-      <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full border border-gray-100 overflow-hidden flex flex-col max-h-[90vh]">
+      <div class="bg-white rounded-2xl shadow-2xl max-w-4xl w-full border border-gray-100 overflow-hidden flex flex-col max-h-[90vh]">
         <!-- Header -->
         <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-slate-50/50">
           <div class="flex items-center gap-3">
@@ -370,11 +370,47 @@
               <span class="text-xs font-semibold text-teal-900 block mb-1">Completitud del Registro</span>
               <div class="flex items-center gap-2 mt-1">
                 <div class="flex-1 h-2 bg-teal-200/50 rounded-full overflow-hidden">
-                  <div class="h-full bg-[#00aea7] rounded-full" :style="{ width: `${selectedRecord.completitud}%` }" />
+                  <div class="h-full bg-[#00aea7] rounded-full transition-all" :style="{ width: `${selectedRecord.completitud}%` }" />
                 </div>
                 <span class="text-xs font-bold text-teal-800">{{ selectedRecord.completitud }}%</span>
               </div>
-              <p class="text-[10px] text-teal-700 mt-1">Incremento estimado: +{{ selectedRecord.completitud - selectedRecord.completitudPre }}% con enriquecimiento</p>
+              <p class="text-[10px] text-teal-700 mt-1">
+                Incremento estimado: +{{ Math.max(0, selectedRecord.completitud - selectedRecord.completitudPre) }}% con enriquecimiento
+              </p>
+
+              <!-- Desglose de los 6 metadatos enriquecidos objetivo -->
+              <div class="mt-3 pt-2.5 border-t border-teal-100/60 grid grid-cols-2 sm:grid-cols-3 gap-1.5 text-[10px]">
+                <div class="flex items-center gap-1" :class="selectedRecord.completitudDetalle?.financiamiento ? 'text-emerald-700 font-medium' : 'text-slate-400'">
+                  <CheckCircle2 v-if="selectedRecord.completitudDetalle?.financiamiento" :size="12" class="text-emerald-500 shrink-0" />
+                  <XCircle v-else :size="12" class="text-slate-300 shrink-0" />
+                  <span class="truncate">Financiamiento</span>
+                </div>
+                <div class="flex items-center gap-1" :class="selectedRecord.completitudDetalle?.resumen ? 'text-emerald-700 font-medium' : 'text-slate-400'">
+                  <CheckCircle2 v-if="selectedRecord.completitudDetalle?.resumen" :size="12" class="text-emerald-500 shrink-0" />
+                  <XCircle v-else :size="12" class="text-slate-300 shrink-0" />
+                  <span class="truncate">Resumen</span>
+                </div>
+                <div class="flex items-center gap-1" :class="selectedRecord.completitudDetalle?.palabrasClave ? 'text-emerald-700 font-medium' : 'text-slate-400'">
+                  <CheckCircle2 v-if="selectedRecord.completitudDetalle?.palabrasClave" :size="12" class="text-emerald-500 shrink-0" />
+                  <XCircle v-else :size="12" class="text-slate-300 shrink-0" />
+                  <span class="truncate">Palabras clave</span>
+                </div>
+                <div class="flex items-center gap-1" :class="selectedRecord.completitudDetalle?.areaOcde ? 'text-emerald-700 font-medium' : 'text-slate-400'">
+                  <CheckCircle2 v-if="selectedRecord.completitudDetalle?.areaOcde" :size="12" class="text-emerald-500 shrink-0" />
+                  <XCircle v-else :size="12" class="text-slate-300 shrink-0" />
+                  <span class="truncate">Área OCDE</span>
+                </div>
+                <div class="flex items-center gap-1" :class="selectedRecord.completitudDetalle?.areaOds ? 'text-emerald-700 font-medium' : 'text-slate-400'">
+                  <CheckCircle2 v-if="selectedRecord.completitudDetalle?.areaOds" :size="12" class="text-emerald-500 shrink-0" />
+                  <XCircle v-else :size="12" class="text-slate-300 shrink-0" />
+                  <span class="truncate">Área ODS</span>
+                </div>
+                <div class="flex items-center gap-1" :class="selectedRecord.completitudDetalle?.derechosAcceso ? 'text-emerald-700 font-medium' : 'text-slate-400'">
+                  <CheckCircle2 v-if="selectedRecord.completitudDetalle?.derechosAcceso" :size="12" class="text-emerald-500 shrink-0" />
+                  <XCircle v-else :size="12" class="text-slate-300 shrink-0" />
+                  <span class="truncate">Derechos acceso</span>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -474,7 +510,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
-import { Search, Zap, Download, Filter, ChevronDown, Eye, X, Sparkles, Check, RefreshCw } from 'lucide-vue-next'
+import { Search, Zap, Download, Filter, ChevronDown, Eye, X, Sparkles, Check, RefreshCw, CheckCircle2, XCircle } from 'lucide-vue-next'
 import Card from '../components/common/Card.vue'
 import Badge from '../components/common/Badge.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
@@ -534,6 +570,108 @@ const getFalenciaBadgeClass = (falencia: string): string => {
   if (f.includes('derechos') || f.includes('acceso') || f.includes('rights')) return 'bg-purple-50 text-purple-800 border border-purple-200'
   if (f.includes('licencia') || f.includes('license')) return 'bg-indigo-50 text-indigo-800 border border-indigo-200'
   return 'bg-slate-100 text-slate-700 border border-slate-200'
+}
+
+/**
+ * Calcula el porcentaje real de completitud (0-100%) sobre los 6 metadatos enriquecidos objetivo:
+ * 1. Fuente de financiamiento
+ * 2. Resumen (abstract)
+ * 3. Palabras clave
+ * 4. Área OCDE
+ * 5. Área ODS
+ * 6. Derechos de acceso
+ */
+const calculateRecordCompletitud = (item: any, recMeta: any, kws: string[] = [], fundingArr: string[] = []) => {
+  // 1. Fuente de financiamiento
+  const hasFunding = Boolean(
+    (Array.isArray(fundingArr) && fundingArr.length > 0) ||
+    (Array.isArray(item?.fuente_financiamiento) && item.fuente_financiamiento.length > 0) ||
+    (Array.isArray(recMeta?.funding) && recMeta.funding.length > 0) ||
+    (typeof item?.fuente_financiamiento === 'string' && item.fuente_financiamiento.trim() && !['[]', 'null', 'none'].includes(item.fuente_financiamiento.trim().toLowerCase())) ||
+    (typeof recMeta?.funding === 'string' && recMeta.funding.trim() && !['[]', 'null', 'none'].includes(recMeta.funding.trim().toLowerCase()))
+  )
+
+  // 2. Resumen (abstract)
+  const hasAbstract = Boolean(
+    (item?.abstract_enriquecido && String(item.abstract_enriquecido).trim().length > 10) ||
+    (item?.resumen_original && String(item.resumen_original).trim().length > 10) ||
+    (recMeta?.abstract && String(recMeta.abstract).trim().length > 10)
+  )
+
+  // 3. Palabras clave
+  const hasKeywords = Boolean(
+    (Array.isArray(kws) && kws.length > 0) ||
+    (Array.isArray(item?.palabras_clave) && item.palabras_clave.length > 0) ||
+    (Array.isArray(recMeta?.keywords) && recMeta.keywords.length > 0) ||
+    (typeof item?.palabras_clave === 'string' && item.palabras_clave.trim() && !['[]', 'null', 'none'].includes(item.palabras_clave.trim().toLowerCase()))
+  )
+
+  // 4. Área OCDE
+  const hasOcde = Boolean(
+    (Array.isArray(item?.area_ocde) && item.area_ocde.length > 0) ||
+    (Array.isArray(recMeta?.area_ocde) && recMeta.area_ocde.length > 0) ||
+    (typeof item?.area_ocde === 'string' && item.area_ocde.trim() && !['[]', 'null', 'none'].includes(item.area_ocde.trim().toLowerCase())) ||
+    (typeof recMeta?.area_ocde === 'string' && recMeta.area_ocde.trim() && !['[]', 'null', 'none'].includes(recMeta.area_ocde.trim().toLowerCase()))
+  )
+
+  // 5. Área ODS
+  const hasOds = Boolean(
+    (Array.isArray(item?.area_ods) && item.area_ods.length > 0) ||
+    (Array.isArray(recMeta?.area_ods) && recMeta.area_ods.length > 0) ||
+    (typeof item?.area_ods === 'string' && item.area_ods.trim() && !['[]', 'null', 'none'].includes(item.area_ods.trim().toLowerCase())) ||
+    (typeof recMeta?.area_ods === 'string' && recMeta.area_ods.trim() && !['[]', 'null', 'none'].includes(recMeta.area_ods.trim().toLowerCase()))
+  )
+
+  // 6. Derechos de acceso
+  const accessVal = String(item?.derechos_acceso || recMeta?.access_rights || recMeta?.derechos_acceso || '').trim().toLowerCase()
+  const hasAccessRights = Boolean(accessVal && !['null', 'none', 'undefined', ''].includes(accessVal))
+
+  const countPresent = [hasFunding, hasAbstract, hasKeywords, hasOcde, hasOds, hasAccessRights].filter(Boolean).length
+  const completitud = Math.round((countPresent / 6) * 100)
+
+  // Pre-enriquecimiento (estado original antes del procesamiento)
+  const tf = String(item?.tipo_falencia || '').toUpperCase()
+  const hadAbstract = Boolean(
+    (item?.resumen_original && String(item.resumen_original).trim().length > 10) ||
+    (tf.length > 0 && !tf.includes('SIN_ABSTRACT') && !tf.includes('SIN_DOI_NI_ABSTRACT') && !tf.includes('SIN_ABSTRACT_CON_DOI'))
+  )
+  const hadKeywords = Boolean(tf.length > 0 && !tf.includes('SIN_PALABRAS_CLAVE'))
+  const hadFunding = Boolean(tf.length > 0 && !tf.includes('SIN_FINANCIAMIENTO'))
+  const hadAccessRights = Boolean(
+    (hasAccessRights && !tf.includes('SIN_DERECHOS_ACCESO')) ||
+    (tf.length > 0 && !tf.includes('SIN_DERECHOS_ACCESO'))
+  )
+  const hadOcde = false
+  const hadOds = false
+
+  const countPre = [hadFunding, hadAbstract, hadKeywords, hadOcde, hadOds, hadAccessRights].filter(Boolean).length
+  const completitudPre = Math.min(completitud, Math.round((countPre / 6) * 100))
+
+  return {
+    completitud,
+    completitudPre,
+    detalle: {
+      financiamiento: hasFunding,
+      resumen: hasAbstract,
+      palabrasClave: hasKeywords,
+      areaOcde: hasOcde,
+      areaOds: hasOds,
+      derechosAcceso: hasAccessRights
+    }
+  }
+}
+
+const formatCompletitudDetalle = (row: MonitoreoRecord): string => {
+  if (!row.completitudDetalle) return `${row.completitud}%`
+  const d = row.completitudDetalle
+  const presentes: string[] = []
+  if (d.financiamiento) presentes.push('Financiamiento')
+  if (d.resumen) presentes.push('Resumen')
+  if (d.palabrasClave) presentes.push('Palabras clave')
+  if (d.areaOcde) presentes.push('Área OCDE')
+  if (d.areaOds) presentes.push('Área ODS')
+  if (d.derechosAcceso) presentes.push('Derechos de acceso')
+  return presentes.length > 0 ? `${presentes.length}/6 metadatos: ${presentes.join(', ')}` : '0/6 metadatos recuperados'
 }
 
 const getBackendEstadoFilter = (): string | undefined => {
@@ -607,6 +745,8 @@ const loadRealQueue = async () => {
           fundingArr = [item.fuente_financiamiento]
         }
 
+        const compData = calculateRecordCompletitud(item, recMeta, kws, fundingArr)
+
         mapped.push({
           id: String(item.id || item.uuid_dspace || ''),
           uuid: uuidVal,
@@ -615,8 +755,9 @@ const loadRealQueue = async () => {
           fecha: item.created_at ? item.created_at.split('T')[0] : 'Hoy',
           prioridad: item.tipo_falencia?.includes('AMBOS') || item.tipo_falencia?.includes(',') ? 'Alta' : 'Media',
           estado: item.estado === 'ENRIQUECIDO' || item.estado === 'SINCRONIZADO_DSPACE' || item.estado === 'COMPLETO' ? 'Completado' : item.estado === 'EN_PROCESO' ? 'En proceso' : 'Pendiente',
-          completitud: item.estado === 'ENRIQUECIDO' || item.estado === 'COMPLETO' ? 95 : item.estado === 'EN_PROCESO' ? 70 : 45,
-          completitudPre: 40,
+          completitud: item.completitud !== undefined ? item.completitud : compData.completitud,
+          completitudPre: item.completitud_pre !== undefined ? item.completitud_pre : compData.completitudPre,
+          completitudDetalle: compData.detalle,
           coleccion: item.coleccion || 'Artículos Científicos USACH',
           comunidad: item.comunidad || 'Facultad USACH',
           autor: item.autor || 'Investigador USACH',
@@ -647,6 +788,7 @@ const loadRealQueue = async () => {
 
         for (const p of pagedProposals) {
           const uuidVal = String(p.uuid_dspace || p.uuid || p.item_uuid || (typeof p.item_id === 'string' && p.item_id.includes('-') ? p.item_id : ''))
+          const compData = calculateRecordCompletitud(p, {}, [], [])
           mapped.push({
             id: String(p.id || p.uuid_dspace || ''),
             uuid: uuidVal,
@@ -655,8 +797,9 @@ const loadRealQueue = async () => {
             fecha: p.created_at ? p.created_at.split('T')[0] : 'Hoy',
             prioridad: 'Alta',
             estado: p.status === 'APPROVED' ? 'Completado' : p.status === 'PENDING_CURATION' ? 'En proceso' : 'Pendiente',
-            completitud: p.status === 'APPROVED' ? 100 : 70,
-            completitudPre: 40,
+            completitud: compData.completitud,
+            completitudPre: compData.completitudPre,
+            completitudDetalle: compData.detalle,
             coleccion: 'DSpace-CRIS',
             comunidad: 'VRIIC',
             autor: 'Investigador USACH',
@@ -771,7 +914,6 @@ const runAgentSingle = async (record: MonitoreoRecord | null) => {
   try {
     await proposalService.enrichQueueItem(record.id || record.uuid || '')
     record.estado = 'Completado'
-    record.completitud = 95
     completadosCount.value++
     pendientesCount.value = Math.max(0, pendientesCount.value - 1)
 

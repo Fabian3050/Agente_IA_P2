@@ -131,15 +131,15 @@ class MetadataRetrievalServiceMS1:
         db.commit()
 
         # ---------------------------------------------------------------------
-        # 2. EVALUACIÓN DE FUZZY MATCHING SEGÚN PROTOCOLO (Sección 3.2)
+        # 2. EVALUACIÓN DE FUZZY MATCHING Y RANKING DE CONFIANZA
         # ---------------------------------------------------------------------
-        # Verificar si hay coincidencia válida o dudosa
-        best_source = None
-        max_score = 0.0
-        for s_name, score in match_scores.items():
-            if score > max_score and results_by_source.get(s_name):
-                max_score = score
-                best_source = s_name
+        ranked_general = self._rank_sources(
+            results_by_source,
+            match_scores,
+            preferred_order=["Crossref", "OpenAlex", "Semantic Scholar", "Europe PMC", "Unpaywall"]
+        )
+        best_source = ranked_general[0] if ranked_general else None
+        max_score = match_scores.get(best_source, 0.0) if best_source else 0.0
 
         if has_doi:
             # Si tiene DOI: validar que el título retornado no difiera sintácticamente (< 85%)
@@ -162,7 +162,7 @@ class MetadataRetrievalServiceMS1:
         # ---------------------------------------------------------------------
         # 3. CONSOLIDACIÓN DE METADATOS SEGÚN REGLAS DE LIMPIEZA (Sección 3.4)
         # ---------------------------------------------------------------------
-        consolidated = self._consolidate_metadata(results_by_source, best_doi=doi_clean)
+        consolidated = self._consolidate_metadata(results_by_source, best_doi=doi_clean, match_scores=match_scores)
 
         return {
             "outcome": match_outcome,
@@ -173,33 +173,89 @@ class MetadataRetrievalServiceMS1:
             "query_statuses": query_statuses
         }
 
+    def _rank_sources(
+        self,
+        results_by_source: Dict[str, Optional[MetadataResponse]],
+        match_scores: Optional[Dict[str, float]] = None,
+        preferred_order: Optional[List[str]] = None
+    ) -> List[str]:
+        """
+        Ordena las fuentes disponibles según:
+        1. Intervalo de confianza (match_score descendente).
+        2. En caso de empate o puntajes prácticamente idénticos dentro del redondeo a 2 decimales,
+           se utiliza el orden de prioridad académica como criterio de desempate.
+        3. Si existe una fuente de confianza alta o moderada (>= 0.70), descarta fuentes con score < 0.60
+           para evitar contaminación de metadatos con artículos no coincidentes.
+        """
+        if preferred_order is None:
+            preferred_order = ["Crossref", "OpenAlex", "Semantic Scholar", "Europe PMC", "Unpaywall"]
+
+        scores = match_scores or {}
+
+        valid_sources = [s for s in preferred_order if results_by_source.get(s)]
+        for s in results_by_source:
+            if results_by_source.get(s) and s not in valid_sources:
+                valid_sources.append(s)
+
+        if not valid_sources:
+            return []
+
+        max_score = max((scores.get(s, 0.0) for s in valid_sources), default=0.0)
+        if max_score >= 0.70:
+            filtered = [s for s in valid_sources if scores.get(s, 0.0) >= 0.60]
+            if filtered:
+                valid_sources = filtered
+
+        def sort_key(s: str):
+            score = scores.get(s, 0.0)
+            pref_idx = preferred_order.index(s) if s in preferred_order else 999
+            return (-round(score, 2), pref_idx)
+
+        return sorted(valid_sources, key=sort_key)
+
     def _consolidate_metadata(
         self,
         results_by_source: Dict[str, Optional[MetadataResponse]],
-        best_doi: Optional[str]
+        best_doi: Optional[str],
+        match_scores: Optional[Dict[str, float]] = None
     ) -> Dict[str, Any]:
         """
-        Aplica las reglas especializadas de la Sección 3.4:
-        - Abstract: orden de confiabilidad Crossref > OpenAlex > Semantic Scholar > Europe PMC
+        Aplica las reglas especializadas de la Sección 3.4 con ranking de confianza:
+        - Prioriza la fuente con mayor match_score para todos los campos recuperados.
+        - Abstract: orden de confianza (Crossref > OpenAlex > Semantic Scholar > Europe PMC como desempate)
         - dc.subject: palabras clave de autor explícitas
         - cris.concept: conceptos automáticos algorítmicos
         - Financiamiento desglosado: funding_agency, funding_id, funding_grant_number
         - Derechos de acceso: Gold, Green, Bronze, Hybrid, Closed
         - Versión de manuscrito: Preprint, Postprint, PublishedVersion
+        - DOI: DOI de la fuente con mayor match_score si el registro carecía de él.
         """
-        # Prioridad de Abstract: Crossref > OpenAlex > Semantic Scholar > Europe PMC
+        scores = match_scores or {}
+
+        # Prioridad de Abstract: mayor confianza primero
         abstract = None
         abstract_source = None
-        for s in ["Crossref", "OpenAlex", "Semantic Scholar", "Europe PMC"]:
+        ranked_abstract_sources = self._rank_sources(
+            results_by_source,
+            scores,
+            preferred_order=["Crossref", "OpenAlex", "Semantic Scholar", "Europe PMC"]
+        )
+        for s in ranked_abstract_sources:
             meta = results_by_source.get(s)
             if meta and meta.abstract and len(meta.abstract.strip()) > 20:
                 abstract = meta.abstract.strip()
                 abstract_source = s
                 break
 
-        # Palabras clave del autor (dc.subject)
+        # Palabras clave del autor (dc.subject), descartando fuentes de baja confianza
         author_keywords_set = set()
-        for s, meta in results_by_source.items():
+        ranked_kws_sources = self._rank_sources(
+            results_by_source,
+            scores,
+            preferred_order=["Crossref", "OpenAlex", "Semantic Scholar", "Europe PMC"]
+        )
+        for s in ranked_kws_sources:
+            meta = results_by_source.get(s)
             if meta:
                 kws = meta.author_keywords or meta.keywords or []
                 for kw in kws:
@@ -208,17 +264,28 @@ class MetadataRetrievalServiceMS1:
 
         # Conceptos automáticos algorítmicos (cris.concept)
         automated_concepts_set = set()
-        openalex_meta = results_by_source.get("OpenAlex")
-        if openalex_meta and openalex_meta.automated_concepts:
-            for c in openalex_meta.automated_concepts:
-                if c:
-                    automated_concepts_set.add(c.strip())
+        ranked_concepts = self._rank_sources(
+            results_by_source,
+            scores,
+            preferred_order=["OpenAlex"]
+        )
+        if "OpenAlex" in ranked_concepts:
+            openalex_meta = results_by_source.get("OpenAlex")
+            if openalex_meta and openalex_meta.automated_concepts:
+                for c in openalex_meta.automated_concepts:
+                    if c:
+                        automated_concepts_set.add(c.strip())
 
-        # Financiamiento desglosado (priorizar Crossref u OpenAlex)
+        # Financiamiento desglosado (priorizar mayor confianza)
         funding_agency = None
         funding_id = None
         funding_grant = None
-        for s in ["Crossref", "OpenAlex", "Europe PMC"]:
+        ranked_funding_sources = self._rank_sources(
+            results_by_source,
+            scores,
+            preferred_order=["Crossref", "OpenAlex", "Europe PMC"]
+        )
+        for s in ranked_funding_sources:
             meta = results_by_source.get(s)
             if meta and (meta.funding_agency or meta.funding_id or meta.funding_grant_number):
                 funding_agency = meta.funding_agency
@@ -226,21 +293,32 @@ class MetadataRetrievalServiceMS1:
                 funding_grant = meta.funding_grant_number
                 break
 
-        # Acceso abierto, Licencia y Versión (priorizar Unpaywall u OpenAlex)
+        # Acceso abierto, Licencia y Versión (priorizar mayor confianza)
         oa_status = None
         license_val = None
         version_type = None
-        for s in ["Unpaywall", "OpenAlex", "Crossref"]:
+        ranked_oa_sources = self._rank_sources(
+            results_by_source,
+            scores,
+            preferred_order=["Unpaywall", "OpenAlex", "Crossref", "Europe PMC"]
+        )
+        for s in ranked_oa_sources:
             meta = results_by_source.get(s)
             if meta and (meta.oa_status or meta.license or meta.version_type):
                 oa_status = oa_status or meta.oa_status
                 license_val = license_val or meta.license
                 version_type = version_type or meta.version_type
 
-        # Si aún no hay DOI pero OpenAlex o Crossref encontraron uno
+        # Si aún no hay DOI pero se encontró uno, priorizar el DOI de la fuente con mayor match_score
         final_doi = best_doi
         if not final_doi:
-            for s, meta in results_by_source.items():
+            ranked_doi_sources = self._rank_sources(
+                results_by_source,
+                scores,
+                preferred_order=["Crossref", "OpenAlex", "Semantic Scholar", "Europe PMC"]
+            )
+            for s in ranked_doi_sources:
+                meta = results_by_source.get(s)
                 if meta and meta.doi:
                     final_doi = meta.doi
                     break

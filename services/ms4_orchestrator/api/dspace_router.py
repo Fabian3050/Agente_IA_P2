@@ -107,6 +107,57 @@ def get_metrics_history(
     records = db.query(DSpaceMetricsHistory).order_by(DSpaceMetricsHistory.fecha.desc()).limit(limit).all()
     return records
 
+def calculate_record_completitud(i: DSpaceEnrichmentQueue):
+    """
+    Calcula el porcentaje de completitud real (0-100%) sobre los 6 metadatos enriquecidos objetivo:
+    1. Fuente de financiamiento
+    2. Resumen (abstract)
+    3. Palabras clave
+    4. Área OCDE
+    5. Área ODS
+    6. Derechos de acceso
+    """
+    rec_meta = i.metadatos_recuperados or {}
+
+    # 1. Fuente de financiamiento
+    has_funding = bool(i.fuente_financiamiento) or bool(rec_meta.get("funding"))
+
+    # 2. Resumen
+    has_abstract = bool(i.abstract_enriquecido and len(str(i.abstract_enriquecido).strip()) > 10) or \
+                   bool(i.resumen_original and len(str(i.resumen_original).strip()) > 10) or \
+                   bool(rec_meta.get("abstract") and len(str(rec_meta.get("abstract")).strip()) > 10)
+
+    # 3. Palabras clave
+    has_keywords = bool(i.palabras_clave) or bool(rec_meta.get("keywords"))
+
+    # 4. Área OCDE
+    has_ocde = bool(i.area_ocde) or bool(rec_meta.get("area_ocde"))
+
+    # 5. Área ODS
+    has_ods = bool(i.area_ods) or bool(rec_meta.get("area_ods"))
+
+    # 6. Derechos de acceso
+    access_val = str(i.derechos_acceso or rec_meta.get("access_rights") or rec_meta.get("derechos_acceso") or "").strip().lower()
+    has_access = bool(access_val and access_val not in ["null", "none", "undefined", ""])
+
+    count_post = sum([has_funding, has_abstract, has_keywords, has_ocde, has_ods, has_access])
+    completitud = round((count_post / 6.0) * 100)
+
+    # Pre-enriquecimiento (estado original antes de procesar)
+    tf = (i.tipo_falencia or "").upper()
+    had_abstract = bool(i.resumen_original and len(str(i.resumen_original).strip()) > 10) or \
+                   (bool(tf) and "SIN_ABSTRACT" not in tf and "SIN_DOI_NI_ABSTRACT" not in tf and "SIN_ABSTRACT_CON_DOI" not in tf)
+    had_keywords = bool(tf) and "SIN_PALABRAS_CLAVE" not in tf
+    had_funding = bool(tf) and "SIN_FINANCIAMIENTO" not in tf
+    had_access = (bool(access_val) and "SIN_DERECHOS_ACCESO" not in tf) or (bool(tf) and "SIN_DERECHOS_ACCESO" not in tf)
+    had_ocde = False
+    had_ods = False
+
+    count_pre = sum([had_funding, had_abstract, had_keywords, had_ocde, had_ods, had_access])
+    completitud_pre = min(completitud, round((count_pre / 6.0) * 100))
+
+    return completitud, completitud_pre
+
 @router.get("/enrichment-queue")
 def get_enrichment_queue(
     estado: Optional[str] = Query(None, description="Filtrar por estado: PENDIENTE, EN_PROCESO, ENRIQUECIDO, NO_ENCONTRADO, ERROR, SINCRONIZADO_DSPACE"),
@@ -140,48 +191,52 @@ def get_enrichment_queue(
 
     total = query.count()
     items = query.order_by(DSpaceEnrichmentQueue.id.asc()).offset(page * size).limit(size).all()
+    serialized_items = []
+    for i in items:
+        comp, comp_pre = calculate_record_completitud(i)
+        serialized_items.append({
+            "id": i.id,
+            "dspace_uuid": i.dspace_uuid,
+            "uuid_dspace": i.dspace_uuid,
+            "doi": i.doi,
+            "titulo": i.titulo or (f"Publicación (DOI: {i.doi})" if i.doi else f"Registro DSpace #{i.id}"),
+            "title": i.titulo or (f"Publicación (DOI: {i.doi})" if i.doi else f"Registro DSpace #{i.id}"),
+            "tipo_recurso": i.tipo_recurso,
+            "tipo_falencia": i.tipo_falencia,
+            "estado": i.estado,
+            "completitud": comp,
+            "completitud_pre": comp_pre,
+            "fuente_enriquecimiento": i.fuente_enriquecimiento,
+            "abstract_enriquecido": i.abstract_enriquecido,
+            "palabras_clave": i.palabras_clave,
+            "fuente_financiamiento": i.fuente_financiamiento,
+            "derechos_acceso": i.derechos_acceso,
+            "licencia": getattr(i, "licencia", None) or (i.metadatos_recuperados.get("license") if i.metadatos_recuperados else None),
+            "area_ocde": i.area_ocde,
+            "area_ods": i.area_ods,
+            "metadatos_recuperados": i.metadatos_recuperados or (
+                {
+                    "abstract": i.abstract_enriquecido,
+                    "keywords": i.palabras_clave,
+                    "funding": i.fuente_financiamiento,
+                    "access_rights": i.derechos_acceso,
+                    "license": getattr(i, "licencia", None),
+                    "doi": i.doi,
+                    "sources": [i.fuente_enriquecimiento] if i.fuente_enriquecimiento else [],
+                    "area_ocde": i.area_ocde,
+                    "area_ods": i.area_ods,
+                } if (i.abstract_enriquecido or i.palabras_clave or i.fuente_financiamiento or i.derechos_acceso or getattr(i, "licencia", None) or i.area_ocde or i.area_ods) else None
+            ),
+            "resumen_original": i.resumen_original,
+            "created_at": i.created_at.isoformat() if i.created_at else None,
+            "updated_at": i.updated_at.isoformat() if i.updated_at else None
+        })
+
     return {
         "total": total,
         "page": page,
         "size": size,
-        "items": [
-            {
-                "id": i.id,
-                "dspace_uuid": i.dspace_uuid,
-                "uuid_dspace": i.dspace_uuid,
-                "doi": i.doi,
-                "titulo": i.titulo or (f"Publicación (DOI: {i.doi})" if i.doi else f"Registro DSpace #{i.id}"),
-                "title": i.titulo or (f"Publicación (DOI: {i.doi})" if i.doi else f"Registro DSpace #{i.id}"),
-                "tipo_recurso": i.tipo_recurso,
-                "tipo_falencia": i.tipo_falencia,
-                "estado": i.estado,
-                "fuente_enriquecimiento": i.fuente_enriquecimiento,
-                "abstract_enriquecido": i.abstract_enriquecido,
-                "palabras_clave": i.palabras_clave,
-                "fuente_financiamiento": i.fuente_financiamiento,
-                "derechos_acceso": i.derechos_acceso,
-                "licencia": getattr(i, "licencia", None) or (i.metadatos_recuperados.get("license") if i.metadatos_recuperados else None),
-                "area_ocde": i.area_ocde,
-                "area_ods": i.area_ods,
-                "metadatos_recuperados": i.metadatos_recuperados or (
-                    {
-                        "abstract": i.abstract_enriquecido,
-                        "keywords": i.palabras_clave,
-                        "funding": i.fuente_financiamiento,
-                        "access_rights": i.derechos_acceso,
-                        "license": getattr(i, "licencia", None),
-                        "doi": i.doi,
-                        "sources": [i.fuente_enriquecimiento] if i.fuente_enriquecimiento else [],
-                        "area_ocde": i.area_ocde,
-                        "area_ods": i.area_ods,
-                    } if (i.abstract_enriquecido or i.palabras_clave or i.fuente_financiamiento or i.derechos_acceso or getattr(i, "licencia", None) or i.area_ocde or i.area_ods) else None
-                ),
-                "resumen_original": i.resumen_original,
-                "created_at": i.created_at.isoformat() if i.created_at else None,
-                "updated_at": i.updated_at.isoformat() if i.updated_at else None
-            }
-            for i in items
-        ]
+        "items": serialized_items
     }
 
 @router.get("/enrichment-queue/stats")

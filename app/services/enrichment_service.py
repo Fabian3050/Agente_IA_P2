@@ -13,6 +13,7 @@ from app.models.metadata_model import MetadataResponse
 from app.services.metadata_service import MetadataService
 from app.services.classification_service import ClassificationService
 from app.services.dspace_service import normalize_license
+from app.services.matching_service import calculate_similarity
 
 class EnrichmentService:
     """
@@ -72,6 +73,18 @@ class EnrichmentService:
 
             # 1.3 Procesar y combinar los metadatos obtenidos de las fuentes
             if resultados:
+                # Si la búsqueda se hizo por título, ordenar los candidatos por match_score (similitud)
+                if item.titulo and not (item.doi and item.doi.strip()):
+                    def get_score(cand):
+                        sim = calculate_similarity(item.titulo, cand.title) if cand and cand.title else 0.0
+                        return sim
+
+                    resultados.sort(key=get_score, reverse=True)
+                    top_score = get_score(resultados[0]) if resultados else 0.0
+                    # Si hay un candidato de confianza alta/moderada (>= 0.70), descartar los de score < 0.60
+                    if top_score >= 0.70:
+                        resultados = [r for r in resultados if get_score(r) >= 0.60]
+
                 for r in resultados:
                     if r.source:
                         fuentes_utilizadas.add(r.source)

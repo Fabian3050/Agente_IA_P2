@@ -74,6 +74,8 @@ class EnrichmentService:
                     doi_encontrado = str(consolidated["doi"]).strip()
                 if best_source:
                     fuentes_utilizadas.add(best_source)
+                if consolidated.get("abstract_source"):
+                    fuentes_utilizadas.add(consolidated["abstract_source"])
             except Exception as e_ms1:
                 print(f"[EnrichmentService] Error consultando MS1: {e_ms1}")
 

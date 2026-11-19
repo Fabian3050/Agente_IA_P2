@@ -10,15 +10,17 @@
         <div class="absolute -right-10 -top-10 w-40 h-40 rounded-full bg-white/10 blur-xl pointer-events-none" />
         <div class="absolute -left-10 -bottom-10 w-40 h-40 rounded-full bg-black/10 blur-xl pointer-events-none" />
 
-        <div class="relative z-10 flex items-center gap-3">
-          <div class="w-full h-24 rounded-xl bg-[#00aea7] p-3 shadow-md flex items-center justify-center flex-shrink-0">
-            <div class="text-white text-3xl font-black tracking-widest border-2 border-white/40 px-6 py-2 rounded-lg">
-              USACH
-            </div>
+        <div class="relative z-10 flex items-center mb-2">
+          <div class="w-full py-3.5 px-4 rounded-xl bg-white/10 backdrop-blur-xs border border-white/20 shadow-sm flex items-center justify-center">
+            <img
+              src="/logo-usach.png"
+              alt="Universidad de Santiago de Chile"
+              class="h-12 w-auto max-w-[220px] object-contain"
+            />
           </div>
         </div>
 
-        <div class="translate-y-3 relative z-10">
+        <div class="relative z-10">
           <span class="text-xs font-semibold tracking-wider uppercase block text-white/80">VRIIC · USACH</span>
           <span class="text-sm font-bold block leading-tight">DSpace-CRIS</span>
         </div>
@@ -47,13 +49,17 @@
 
       <!-- Right side: Login Form & OAuth 2.0 / OIDC Flow -->
       <div class="md:col-span-7 p-8 md:p-10 flex flex-col justify-center">
-        <div class="flex items-center justify-between gap-4 -mt-3 mb-4">
-          <div class="text-xs font-bold text-gray-500 uppercase tracking-wider">
-            VRIIC Vicerrectoría
-          </div>
-          <div class="text-xs font-bold text-gray-400 uppercase tracking-wider">
-            ANID Chile
-          </div>
+        <div class="flex items-center justify-between gap-6 -mt-3 mb-6">
+          <img
+            src="/image-vriic.png"
+            alt="VRIIC Vicerrectoría USACH"
+            class="h-10 max-h-10 w-auto max-w-[190px] object-contain"
+          />
+          <img
+            src="/anid.png"
+            alt="ANID Chile"
+            class="h-10 max-h-10 w-auto max-w-[130px] object-contain"
+          />
         </div>
 
         <div class="mb-5">
@@ -126,21 +132,21 @@
               :disabled="loading || loadingCallback"
               class="py-2 px-2 border border-purple-200 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-medium rounded-lg transition-colors cursor-pointer text-center"
             >
-              👑 Administrador
+              Administrador
             </button>
             <button
               @click="quickLogin('curador.vriic@usach.cl', 'Curador_VRIIC')"
               :disabled="loading || loadingCallback"
               class="py-2 px-2 border border-teal-200 bg-teal-50 hover:bg-teal-100 text-teal-700 text-xs font-medium rounded-lg transition-colors cursor-pointer text-center"
             >
-              🔍 Curador VRIIC
+              Curador VRIIC
             </button>
             <button
               @click="quickLogin('investigador@usach.cl', 'Academico')"
               :disabled="loading || loadingCallback"
               class="py-2 px-2 border border-blue-200 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-medium rounded-lg transition-colors cursor-pointer text-center"
             >
-              📋 Académico
+              Académico
             </button>
           </div>
         </div>
