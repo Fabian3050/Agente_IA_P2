@@ -1,6 +1,9 @@
 import httpx
 from typing import List, Optional
-from models.metadata_model import MetadataResponse
+try:
+    from models.metadata_model import MetadataResponse
+except (ImportError, AttributeError):
+    from services.ms1_retrieval.models.metadata_model import MetadataResponse
 
 async def search_semantic_scholar(query: str, limit: int = 5) -> List[MetadataResponse]:
     url = "https://api.semanticscholar.org/graph/v1/paper/search"

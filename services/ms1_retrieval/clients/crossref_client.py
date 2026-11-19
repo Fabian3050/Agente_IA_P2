@@ -1,7 +1,10 @@
 import httpx
 import re
 from typing import List, Optional
-from models.metadata_model import MetadataResponse
+try:
+    from models.metadata_model import MetadataResponse
+except (ImportError, AttributeError):
+    from services.ms1_retrieval.models.metadata_model import MetadataResponse
 
 CROSSREF_POLITE_USER_AGENT = "DSpaceCRIS-Agent/3.0 (mailto:agente_ia_vriic@usach.cl)"
 

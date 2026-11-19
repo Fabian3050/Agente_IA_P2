@@ -1,6 +1,9 @@
 import asyncio
 from typing import List, Optional
-from models.metadata_model import MetadataResponse
+try:
+    from models.metadata_model import MetadataResponse
+except (ImportError, AttributeError):
+    from services.ms1_retrieval.models.metadata_model import MetadataResponse
 from clients.crossref_client import search_crossref, get_by_doi_crossref, get_doi_by_title_and_abstract_crossref
 from clients.openalex_client import OpenAlexClient
 import httpx

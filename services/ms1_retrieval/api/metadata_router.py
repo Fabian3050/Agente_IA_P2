@@ -1,6 +1,9 @@
 from fastapi import APIRouter, Query, Depends, HTTPException
 from typing import List, Optional
-from models.metadata_model import MetadataResponse
+try:
+    from models.metadata_model import MetadataResponse
+except (ImportError, AttributeError):
+    from services.ms1_retrieval.models.metadata_model import MetadataResponse
 from services.metadata_service import MetadataService
 
 router = APIRouter(

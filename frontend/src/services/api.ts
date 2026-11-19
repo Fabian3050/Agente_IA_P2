@@ -8,10 +8,10 @@ export const MS_ENDPOINTS = {
   MS3_AUTH: import.meta.env.VITE_MS3_URL || 'http://localhost:8003',
 }
 
-export function createApiClient(baseURL: string) {
+export function createApiClient(baseURL: string, defaultTimeout: number = 180000) {
   const client = axios.create({
     baseURL,
-    timeout: 15000,
+    timeout: defaultTimeout, // 180 segundos (3 minutos) para permitir búsqueda en fuentes académicas e inferencia LLM
     headers: {
       'Content-Type': 'application/json',
     },

@@ -97,21 +97,18 @@ export const proposalService = {
   },
 
   async enrichQueueItem(idOrUuid: string): Promise<any> {
-    try {
-      if (/^\d+$/.test(idOrUuid)) {
-        const res = await ms4Client.post(`/dspace/enrich/${idOrUuid}`)
-        return res.data
-      } else {
-        const res = await ms4Client.post(`/dspace/enrich-by-uuid/${idOrUuid}`)
-        return res.data
-      }
-    } catch {
-      return await this.detectMissing([{ item_id: idOrUuid, title: 'Ítem DSpace', missing_fields: [] }])
+    const config = { timeout: 180000 }
+    if (/^\d+$/.test(idOrUuid)) {
+      const res = await ms4Client.post(`/dspace/enrich/${idOrUuid}`, null, config)
+      return res.data
+    } else {
+      const res = await ms4Client.post(`/dspace/enrich-by-uuid/${idOrUuid}`, null, config)
+      return res.data
     }
   },
 
   async enrichBatch(limit: number = 10): Promise<any> {
-    const res = await ms4Client.post('/dspace/enrich-next', null, { params: { limit } })
+    const res = await ms4Client.post('/dspace/enrich-next', null, { params: { limit }, timeout: 300000 })
     return res.data
   },
 

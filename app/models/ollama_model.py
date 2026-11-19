@@ -1,12 +1,13 @@
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Any, Dict
 
 class OllamaGenerateRequest(BaseModel):
-    model: str = Field(default="llama3", description="The name of the model to use")
+    model: str = Field(default="llama3.2", description="The name of the model to use")
     prompt: str = Field(..., description="The prompt to generate a response for")
     system: Optional[str] = Field(None, description="System message to (overrides what is defined in the Modelfile)")
     stream: bool = Field(False, description="If false the response will be returned as a single response object")
-    format: Optional[str] = Field(None, description="The format to return a response in. Currently the only accepted value is json")
+    format: Optional[Any] = Field(None, description="The format or JSON Schema to return a response in.")
+    options: Optional[Dict[str, Any]] = Field(None, description="Ollama model options like temperature, num_ctx, seed")
 
 class OllamaGenerateResponse(BaseModel):
     model: str

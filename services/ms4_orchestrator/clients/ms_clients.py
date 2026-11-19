@@ -33,7 +33,7 @@ class MS2Client:
             "temperature": 0.0,
             "repetition_number": 1
         }
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=90.0) as client:
             resp = await client.post(url, json=payload)
             resp.raise_for_status()
             return resp.json()

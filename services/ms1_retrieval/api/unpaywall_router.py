@@ -1,7 +1,10 @@
 from fastapi import APIRouter, HTTPException
 from typing import Optional, List
 from clients.unpaywall_client import get_by_doi_unpaywall, search_unpaywall
-from models.metadata_model import MetadataResponse
+try:
+    from models.metadata_model import MetadataResponse
+except (ImportError, AttributeError):
+    from services.ms1_retrieval.models.metadata_model import MetadataResponse
 
 router = APIRouter(
     prefix="/unpaywall",

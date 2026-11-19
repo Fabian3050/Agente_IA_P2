@@ -4,13 +4,23 @@ from typing import Optional, List, Dict, Any
 from sqlalchemy import Column, Integer, String, Float, Boolean, JSON, Text, DateTime, Uuid
 from pydantic import BaseModel, Field
 
-from common.database import Base
+try:
+    from common.database import Base
+except ImportError:
+    from services.common.database import Base
 
-from models.classification_model import (
-    OCDEClassificationItem, OCDEClassificationResult, OCDEClassificationResponse,
-    ODSClassificationItem, ODSClassificationResult, ODSClassificationResponse
-)
-from models.ollama_model import OllamaGenerateRequest, OllamaGenerateResponse
+try:
+    from models.classification_model import (
+        OCDEClassificationItem, OCDEClassificationResult, OCDEClassificationResponse,
+        ODSClassificationItem, ODSClassificationResult, ODSClassificationResponse
+    )
+    from models.ollama_model import OllamaGenerateRequest, OllamaGenerateResponse
+except (ImportError, AttributeError):
+    from services.ms2_classification.models.classification_model import (
+        OCDEClassificationItem, OCDEClassificationResult, OCDEClassificationResponse,
+        ODSClassificationItem, ODSClassificationResult, ODSClassificationResponse
+    )
+    from services.ms2_classification.models.ollama_model import OllamaGenerateRequest, OllamaGenerateResponse
 
 
 # =============================================================================
@@ -87,4 +97,6 @@ class ClassificationResultResponse(BaseModel):
     ocde_reasoning: Optional[str] = None
     ods_reasoning: Optional[str] = None
     execution_time_total_ms: int
+    area_ocde: Optional[List[str]] = None
+    area_ods: Optional[List[str]] = None
 
