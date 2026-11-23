@@ -235,6 +235,7 @@ const quickLogin = async (userEmail: string, roleName: 'Admin' | 'Curador_VRIIC'
       name: userEmail.split('.')[0],
       last_name: 'USACH',
       role_name: roleName,
+      orcid: roleName === 'Academico' ? '0000-0001-9876-5432' : '0000-0002-1825-0097'
     })
     emit('login-success', user)
   } catch (err: any) {

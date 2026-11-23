@@ -45,6 +45,7 @@ class TestIntegrationV3(unittest.TestCase):
         self.engine = create_engine("sqlite:///:memory:")
         TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=self.engine)
         Status.metadata.create_all(bind=self.engine)
+        Role.metadata.create_all(bind=self.engine)
         self.db = TestingSessionLocal()
 
         # Sembrar catálogo de 12 estados

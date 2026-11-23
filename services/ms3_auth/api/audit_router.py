@@ -1,9 +1,17 @@
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from common.database import get_db
-from models import AuditLogCreateRequest, AuditLogDTO
-from services.audit_service import MS3AuditWorker
+try:
+    from common.database import get_db
+except ImportError:
+    from services.common.database import get_db
+
+try:
+    from services.ms3_auth.models import AuditLogCreateRequest, AuditLogDTO
+    from services.ms3_auth.services.audit_service import MS3AuditWorker
+except ImportError:
+    from models import AuditLogCreateRequest, AuditLogDTO
+    from services.audit_service import MS3AuditWorker
 
 router = APIRouter(prefix="/audit", tags=["Audit Log"])
 audit_worker = MS3AuditWorker()

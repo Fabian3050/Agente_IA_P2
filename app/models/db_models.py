@@ -80,7 +80,7 @@ class ItemEnrichment(Base):
     status = relationship("Status", back_populates="items")
     field_proposals = relationship("FieldProposal", back_populates="item_enrichment", cascade="all, delete-orphan")
     categories = relationship("ItemCategory", back_populates="item_enrichment", cascade="all, delete-orphan")
-    candidate_matches = relationship("CandidateMatch", back_populates="item_enrichment", cascade="all, delete-orphan")
+    candidate_matches = relationship(lambda: CandidateMatch, back_populates="item_enrichment", cascade="all, delete-orphan")
     classification_logs = relationship("LLMClassificationLog", back_populates="item_enrichment", cascade="all, delete-orphan")
     jobs = relationship("Job", back_populates="item_enrichment", cascade="all, delete-orphan")
     sync_logs = relationship("DSpaceSyncLog", back_populates="item_enrichment", cascade="all, delete-orphan")
@@ -167,7 +167,7 @@ class ExternalAPISource(Base):
     base_url = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
 
-    matches = relationship("CandidateMatch", back_populates="external_source")
+    matches = relationship(lambda: CandidateMatch, back_populates="external_source", overlaps="external_source,matches")
 
 
 class CandidateMatch(Base):
@@ -187,7 +187,7 @@ class CandidateMatch(Base):
     retrieved_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     item_enrichment = relationship("ItemEnrichment", back_populates="candidate_matches")
-    external_source = relationship("ExternalAPISource", back_populates="matches")
+    external_source = relationship(lambda: ExternalAPISource, back_populates="matches", overlaps="external_source,matches")
 
 
 # =============================================================================

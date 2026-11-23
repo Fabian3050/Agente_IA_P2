@@ -6,7 +6,10 @@ try:
     from models.metadata_model import MetadataResponse
 except (ImportError, AttributeError):
     from services.ms1_retrieval.models.metadata_model import MetadataResponse
-from clients.unpaywall_client import _normalize_oa_status, _normalize_version_type
+try:
+    from clients.unpaywall_client import _normalize_oa_status, _normalize_version_type
+except ImportError:
+    from services.ms1_retrieval.clients.unpaywall_client import _normalize_oa_status, _normalize_version_type
 
 
 class OpenAlexClient:

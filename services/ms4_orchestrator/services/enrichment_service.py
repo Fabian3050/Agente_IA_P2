@@ -45,15 +45,22 @@ class EnrichmentService:
         doi_encontrado: Optional[str] = item.doi
         raw_responses: List[Dict[str, Any]] = []
 
+        t_start = datetime.utcnow()
         try:
             # ----------------------------------------------------
             # FASE 1: Búsqueda en Fuentes Académicas vía MS1
             # ----------------------------------------------------
-            item_uuid = uuid.uuid4()
+            try:
+                item_uuid = uuid.UUID(str(item.dspace_uuid))
+            except Exception:
+                item_uuid = uuid.uuid5(uuid.NAMESPACE_DNS, str(item.dspace_uuid or item.id))
+
+            max_score = 0.0
             try:
                 res_ms1 = await self.ms1_client.retrieve(item_id=item_uuid, doi=item.doi, title=item.titulo)
                 consolidated = res_ms1.get("consolidated", {})
                 best_source = res_ms1.get("best_source")
+                max_score = float(res_ms1.get("max_score", 0.0) or 0.0)
                 if consolidated.get("abstract"):
                     abstract_encontrado = str(consolidated["abstract"]).strip()
                 if consolidated.get("author_keywords"):
@@ -78,6 +85,37 @@ class EnrichmentService:
                     fuentes_utilizadas.add(consolidated["abstract_source"])
             except Exception as e_ms1:
                 print(f"[EnrichmentService] Error consultando MS1: {e_ms1}")
+
+            # -------------------------------------------------------------------------
+            # FASE 1.1: Coincidencia Exacta de Título en Semantic Scholar (Fallback/Boost)
+            # Si aún no tenemos abstract y se conoce el título completo de la publicación
+            # -------------------------------------------------------------------------
+            if not abstract_encontrado and item.titulo and len(item.titulo.strip()) > 5:
+                try:
+                    import httpx
+                    clean_t = item.titulo.strip()
+                    url_ss = "https://api.semanticscholar.org/graph/v1/paper/search/match"
+                    async with httpx.AsyncClient() as http_c:
+                        resp_ss = await http_c.get(
+                            url_ss,
+                            params={"query": clean_t, "fields": "title,authors,year,externalIds,url,abstract,s2FieldsOfStudy,openAccessPdf"},
+                            headers={"User-Agent": "AgenteIA-DSpace/3.0 (mailto:agente_ia@usach.cl)"},
+                            timeout=10.0
+                        )
+                        if resp_ss.status_code == 200:
+                            data_ss = resp_ss.json()
+                            item_ss = data_ss.get("data", [data_ss])[0] if isinstance(data_ss.get("data"), list) and data_ss.get("data") else data_ss
+                            if item_ss and item_ss.get("abstract"):
+                                abstract_encontrado = str(item_ss["abstract"]).strip()
+                                fuentes_utilizadas.add("semanticscholar")
+                                if not item.doi and item_ss.get("externalIds", {}).get("DOI"):
+                                    doi_encontrado = item_ss["externalIds"]["DOI"]
+                                if item_ss.get("s2FieldsOfStudy"):
+                                    for f in item_ss["s2FieldsOfStudy"]:
+                                        if isinstance(f, dict) and f.get("category"):
+                                            keywords_acumuladas.add(f["category"])
+                except Exception as e_ss_fb:
+                    print(f"[EnrichmentService] Nota: Fallback coincidencia exacta Semantic Scholar no disponible: {e_ss_fb}")
 
             # ----------------------------------------------------
             # FASE 2: Clasificación Temática con IA vía MS2
@@ -115,6 +153,10 @@ class EnrichmentService:
             if fuentes_utilizadas:
                 item.fuente_enriquecimiento = ", ".join(sorted(fuentes_utilizadas))
 
+            # Calcular tiempo total de ejecución (MS1 + MS2)
+            t_total_seconds = max(0.05, (datetime.utcnow() - t_start).total_seconds())
+            t_total_ms = int(t_total_seconds * 1000)
+
             # Incorporar metadatos enriquecidos en el campo 'metadatos_recuperados' de dspace_enrichment_queue
             metadatos_recuperados_payload = {
                 "abstract": item.abstract_enriquecido,
@@ -126,6 +168,9 @@ class EnrichmentService:
                 "sources": list(sorted(fuentes_utilizadas)) if fuentes_utilizadas else [],
                 "area_ocde": item.area_ocde,
                 "area_ods": item.area_ods,
+                "max_score": max_score,
+                "tiempo_ejecucion_ms": t_total_ms,
+                "tiempo_ejecucion_segundos": round(t_total_seconds, 2),
                 "recovered_at": datetime.utcnow().isoformat()
             }
             if 'res_ms1' in locals() and isinstance(res_ms1, dict):
@@ -138,7 +183,11 @@ class EnrichmentService:
 
             item.metadatos_recuperados = metadatos_recuperados_payload
 
-            if abstract_encontrado or keywords_acumuladas or item.area_ocde or item.area_ods or item.abstract_enriquecido:
+            # Criterio de validación manual:
+            # Si tiene coincidencias pero el match score es menor al 80% (0.8), requiere validación manual
+            if max_score > 0.0 and max_score < 0.8:
+                item.estado = "PENDIENTE_VALIDACION"
+            elif abstract_encontrado or keywords_acumuladas or item.area_ocde or item.area_ods or item.abstract_enriquecido:
                 item.estado = "ENRIQUECIDO"
             else:
                 item.estado = "EN_PROCESO"

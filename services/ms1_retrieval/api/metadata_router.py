@@ -40,3 +40,18 @@ async def search_metadata_by_doi(
         raise HTTPException(status_code=404, detail="No se encontraron metadatos para el DOI especificado")
     return results
 
+@router.get("/exact_title", response_model=Optional[MetadataResponse])
+async def search_metadata_by_exact_title(
+    title: str = Query(..., description="Título exacto de la publicación (ej. 'Attention Is All You Need')"),
+    svc: MetadataService = Depends(get_metadata_service)
+):
+    """
+    Coincidencia exacta de título: Cuenta con un endpoint específico para buscar
+    un artículo por su título exacto (title) en Semantic Scholar (/paper/search/match),
+    ideal cuando se conoce el nombre completo de la publicación.
+    """
+    result = await svc.get_metadata_by_exact_title(title)
+    if not result:
+        raise HTTPException(status_code=404, detail="No se encontró coincidencia exacta de título en Semantic Scholar")
+    return result
+

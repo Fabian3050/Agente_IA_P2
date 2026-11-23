@@ -30,6 +30,23 @@ export const auditService = {
     } catch {
       return []
     }
+  },
+
+  async recordAction(data: {
+    user_id: string
+    item_id: string
+    action: string
+    previous_value?: any
+    new_value?: any
+    rejection_reason?: string
+  }): Promise<any> {
+    try {
+      const res = await ms3Client.post('/audit/', data)
+      return res.data
+    } catch (err) {
+      console.warn('Error registrando auditoría en MS3:', err)
+      return null
+    }
   }
 }
 

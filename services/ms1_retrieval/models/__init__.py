@@ -29,7 +29,7 @@ class ExternalAPISource(Base):
     base_url = Column(String(255), nullable=False)
     is_active = Column(Boolean, default=True, nullable=False)
 
-    matches = relationship("CandidateMatch", back_populates="external_source")
+    matches = relationship(lambda: CandidateMatch, back_populates="external_source")
 
 
 class CandidateMatch(Base):
@@ -37,15 +37,15 @@ class CandidateMatch(Base):
     __table_args__ = {'extend_existing': True}
 
     id = Column(Uuid, primary_key=True, default=uuid.uuid4)
-    id_item_enrichment = Column(Uuid, nullable=False, index=True)
-    id_external_source = Column(Integer, ForeignKey("external_api_source.id"), nullable=False, index=True)
+    id_item_enrichment = Column(Uuid, nullable=False)
+    id_external_source = Column(Integer, ForeignKey("external_api_source.id"), nullable=False)
     candidate_doi = Column(String(150), nullable=True)
     match_score = Column(Float, nullable=True)
     query_result = Column(String(50), nullable=False)
     raw_metadata_json = Column(JSON, nullable=True)
     retrieved_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
-    external_source = relationship("ExternalAPISource", back_populates="matches")
+    external_source = relationship(lambda: ExternalAPISource, back_populates="matches", overlaps="external_source,matches")
 
 
 # =============================================================================

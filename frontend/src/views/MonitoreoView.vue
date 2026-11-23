@@ -70,7 +70,6 @@
               <th class="text-left px-4 py-3 text-[11px] font-semibold text-[#6b7a90] uppercase tracking-wide">ID</th>
               <th class="text-left px-4 py-3 text-[11px] font-semibold text-[#6b7a90] uppercase tracking-wide">UUID DSpace</th>
               <th class="text-left px-4 py-3 text-[11px] font-semibold text-[#6b7a90] uppercase tracking-wide">Título / DOI</th>
-              <th class="text-left px-4 py-3 text-[11px] font-semibold text-[#6b7a90] uppercase tracking-wide">Comunidad</th>
               <th class="text-left px-4 py-3 text-[11px] font-semibold text-[#6b7a90] uppercase tracking-wide">Campo faltante</th>
               <th class="text-left px-4 py-3 text-[11px] font-semibold text-[#6b7a90] uppercase tracking-wide">Completitud</th>
               
@@ -107,7 +106,7 @@
                     </div>
                     <div class="space-y-1 py-0.5">
                       <label
-                        v-for="opt in ['Pendiente', 'En proceso', 'Completado']"
+                        v-for="opt in ['Pendiente', 'Pendiente de validación', 'En proceso', 'Completado']"
                         :key="opt"
                         class="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-slate-50 cursor-pointer text-xs font-medium text-slate-700 select-none transition-colors"
                       >
@@ -129,13 +128,13 @@
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="8" class="text-center py-12 text-slate-500 text-xs">
+              <td colspan="7" class="text-center py-12 text-slate-500 text-xs">
                 <div class="inline-block w-4 h-4 border-2 border-[#00aea7] border-t-transparent rounded-full animate-spin mr-2"></div>
                 Cargando registros reales de la cola de enriquecimiento...
               </td>
             </tr>
             <tr v-else-if="records.length === 0">
-              <td colspan="8" class="text-center py-12 text-slate-500 text-xs">
+              <td colspan="7" class="text-center py-12 text-slate-500 text-xs">
                 <p class="mb-3 text-slate-600 font-medium">No hay publicaciones registradas en la cola de monitoreo actualmente.</p>
                 <button
                   @click="scanAndPopulateMissing"
@@ -169,9 +168,6 @@
               <td class="px-4 py-3.5 max-w-[220px]">
                 <p class="text-xs font-medium text-[#1a2332] truncate" :title="row.title">{{ row.title }}</p>
                 <p class="text-[10px] font-mono text-[#6b7a90] truncate">DOI: {{ row.doi || 'N/A' }}</p>
-              </td>
-              <td class="px-4 py-3.5 max-w-[170px]">
-                <p class="text-xs text-[#1a2332] truncate">{{ row.comunidad }}</p>
               </td>
               <td class="px-4 py-3.5 max-w-[240px]">
                 <div class="flex flex-wrap gap-1">
@@ -217,15 +213,16 @@
                   </button>
                   <button
                     @click="runAgentSingle(row)"
-                    :disabled="enrichingIds[row.id] || row.estado === 'Completado'"
-                    :title="row.estado === 'Completado' ? 'Registro enriquecido' : 'Ejecutar agente sobre este único registro'"
+                    :disabled="enrichingIds[row.id] || row.estado === 'Completado' || row.estado === 'Pendiente de validación'"
+                    :title="row.estado === 'Completado' ? 'Registro enriquecido' : row.estado === 'Pendiente de validación' ? 'Registro enriquecido (requiere validación manual en sección Validación)' : 'Ejecutar agente sobre este único registro'"
                     class="p-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer disabled:cursor-not-allowed"
                     :class="[
-                      row.estado === 'Completado' ? 'text-emerald-600 bg-emerald-50' : 'text-[#1565C0] hover:bg-blue-50'
+                      row.estado === 'Completado' ? 'text-emerald-600 bg-emerald-50' : row.estado === 'Pendiente de validación' ? 'text-amber-700 bg-amber-50 border border-amber-200' : 'text-[#1565C0] hover:bg-blue-50'
                     ]"
                   >
                     <div v-if="enrichingIds[row.id]" class="w-3.5 h-3.5 border-2 border-[#1565C0] border-t-transparent rounded-full animate-spin"></div>
                     <Check v-else-if="row.estado === 'Completado'" :size="14" />
+                    <AlertCircle v-else-if="row.estado === 'Pendiente de validación'" :size="14" />
                     <Zap v-else :size="14" />
                   </button>
                 </div>
@@ -493,6 +490,14 @@
             <Check :size="14" /> Registro Enriquecido
           </button>
           <button
+            v-else-if="selectedRecord.estado === 'Pendiente de validación'"
+            @click="selectedRecord = null"
+            class="px-4 py-2 text-xs font-semibold text-amber-800 bg-amber-100 border border-amber-300 rounded-lg shadow-xs flex items-center gap-1.5 cursor-default"
+            title="El registro ya fue enriquecido por el agente IA y está pendiente de validación manual en la sección de Validación."
+          >
+            <AlertCircle :size="14" /> Pendiente de Validación
+          </button>
+          <button
             v-else
             @click="runAgentSingle(selectedRecord)"
             :disabled="enrichingIds[selectedRecord.id]"
@@ -510,7 +515,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, onMounted } from 'vue'
-import { Search, Zap, Download, Filter, ChevronDown, Eye, X, Sparkles, Check, RefreshCw, CheckCircle2, XCircle } from 'lucide-vue-next'
+import { Search, Zap, Download, Filter, ChevronDown, Eye, X, Sparkles, Check, RefreshCw, CheckCircle2, XCircle, AlertCircle } from 'lucide-vue-next'
 import Card from '../components/common/Card.vue'
 import Badge from '../components/common/Badge.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
@@ -532,12 +537,14 @@ const totalFilteredRecords = ref(0)
 
 const totalDetectados = ref(0)
 const pendientesCount = ref(0)
+const pendientesValidacionCount = ref(0)
 const enProcesoCount = ref(0)
 const completadosCount = ref(0)
 
 const stats = computed(() => [
   { label: 'Total detectados', value: totalDetectados.value.toLocaleString('es-CL'), color: '#F57C00' },
   { label: 'Pendientes', value: pendientesCount.value.toLocaleString('es-CL'), color: '#d32f2f' },
+  { label: 'Pend. validación', value: pendientesValidacionCount.value.toLocaleString('es-CL'), color: '#E65100' },
   { label: 'En proceso', value: enProcesoCount.value.toLocaleString('es-CL'), color: '#00aea7' },
   { label: 'Completados', value: completadosCount.value.toLocaleString('es-CL'), color: '#2E7D32' },
 ])
@@ -678,6 +685,7 @@ const getBackendEstadoFilter = (): string | undefined => {
   if (selectedStatuses.value.length === 0) return undefined
   const mapStatus: Record<string, string[]> = {
     'Pendiente': ['PENDIENTE'],
+    'Pendiente de validación': ['PENDIENTE_VALIDACION', 'VALIDACION', 'COINCIDENCIA_DUDOSA'],
     'En proceso': ['EN_PROCESO'],
     'Completado': ['ENRIQUECIDO', 'SINCRONIZADO_DSPACE', 'COMPLETO']
   }
@@ -711,6 +719,7 @@ const loadRealQueue = async () => {
     const porEstado = statsRes?.por_estado || {}
     totalDetectados.value = statsRes?.total_en_cola ?? 0
     pendientesCount.value = porEstado['PENDIENTE'] || 0
+    pendientesValidacionCount.value = (porEstado['PENDIENTE_VALIDACION'] || 0) + (porEstado['VALIDACION'] || 0) + (porEstado['COINCIDENCIA_DUDOSA'] || 0)
     enProcesoCount.value = porEstado['EN_PROCESO'] || 0
     completadosCount.value = (porEstado['ENRIQUECIDO'] || 0) + (porEstado['SINCRONIZADO_DSPACE'] || 0) + (porEstado['COMPLETO'] || 0)
 
@@ -747,6 +756,11 @@ const loadRealQueue = async () => {
 
         const compData = calculateRecordCompletitud(item, recMeta, kws, fundingArr)
 
+        const isEnriched = item.estado === 'ENRIQUECIDO' || item.estado === 'SINCRONIZADO_DSPACE' || item.estado === 'COMPLETO'
+        const isPendingValidation = item.estado === 'PENDIENTE_VALIDACION' || item.estado === 'VALIDACION' || item.estado === 'COINCIDENCIA_DUDOSA'
+        const isEnProceso = item.estado === 'EN_PROCESO'
+        const mappedEstado = isEnriched ? 'Completado' : isPendingValidation ? 'Pendiente de validación' : isEnProceso ? 'En proceso' : 'Pendiente'
+
         mapped.push({
           id: String(item.id || item.uuid_dspace || ''),
           uuid: uuidVal,
@@ -754,7 +768,8 @@ const loadRealQueue = async () => {
           campo: item.tipo_falencia || 'Metadatos faltantes',
           fecha: item.created_at ? item.created_at.split('T')[0] : 'Hoy',
           prioridad: item.tipo_falencia?.includes('AMBOS') || item.tipo_falencia?.includes(',') ? 'Alta' : 'Media',
-          estado: item.estado === 'ENRIQUECIDO' || item.estado === 'SINCRONIZADO_DSPACE' || item.estado === 'COMPLETO' ? 'Completado' : item.estado === 'EN_PROCESO' ? 'En proceso' : 'Pendiente',
+          estado: mappedEstado,
+          rawEstado: item.estado,
           completitud: item.completitud !== undefined ? item.completitud : compData.completitud,
           completitudPre: item.completitud_pre !== undefined ? item.completitud_pre : compData.completitudPre,
           completitudDetalle: compData.detalle,
@@ -910,6 +925,10 @@ const runAgentOnAll = async () => {
 
 const runAgentSingle = async (record: MonitoreoRecord | null) => {
   if (!record) return
+  if (record.estado === 'Completado' || record.estado === 'Pendiente de validación') {
+    alert('Este registro ya ha sido enriquecido y no requiere un nuevo proceso de enriquecimiento.')
+    return
+  }
   enrichingIds.value[record.id] = true
   try {
     await proposalService.enrichQueueItem(record.id || record.uuid || '')

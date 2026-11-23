@@ -10,7 +10,7 @@ try:
     from clients.openalex_client import OpenAlexClient, get_by_doi_openalex
     from clients.unpaywall_client import get_metadata_by_doi_unpaywall
     from clients.europe_pmc_client import get_by_doi_europe_pmc, search_europe_pmc
-    from clients.semantic_scholar_client import get_by_doi_semantic_scholar, search_semantic_scholar
+    from clients.semantic_scholar_client import get_by_doi_semantic_scholar, search_semantic_scholar, get_by_exact_title_semantic_scholar
     from services.matching_service import calculate_similarity, evaluate_doi_match, evaluate_no_doi_match
 except ImportError:
     from services.ms1_retrieval.models import CandidateMatch, ExternalAPISource, RetrievalResponse, CandidateMetadataDTO
@@ -18,7 +18,7 @@ except ImportError:
     from services.ms1_retrieval.clients.openalex_client import OpenAlexClient, get_by_doi_openalex
     from services.ms1_retrieval.clients.unpaywall_client import get_metadata_by_doi_unpaywall
     from services.ms1_retrieval.clients.europe_pmc_client import get_by_doi_europe_pmc, search_europe_pmc
-    from services.ms1_retrieval.clients.semantic_scholar_client import get_by_doi_semantic_scholar, search_semantic_scholar
+    from services.ms1_retrieval.clients.semantic_scholar_client import get_by_doi_semantic_scholar, search_semantic_scholar, get_by_exact_title_semantic_scholar
     from services.ms1_retrieval.services.matching_service import calculate_similarity, evaluate_doi_match, evaluate_no_doi_match
 
 
@@ -86,8 +86,11 @@ class MS1RetrievalWorker:
                                 meta = candidates[0].get("metadata")
                                 candidate_doi = meta.doi if meta else None
                         elif source_name == "Semantic Scholar":
-                            res_list = await search_semantic_scholar(title, limit=1)
-                            meta = res_list[0] if res_list else None
+                            # Priorizar coincidencia exacta de título (/paper/search/match)
+                            meta = await get_by_exact_title_semantic_scholar(title)
+                            if not meta:
+                                res_list = await search_semantic_scholar(title, limit=1)
+                                meta = res_list[0] if res_list else None
                         elif source_name == "Europe PMC":
                             res_list = await search_europe_pmc(title, limit=1)
                             meta = res_list[0] if res_list else None

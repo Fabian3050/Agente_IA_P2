@@ -45,6 +45,7 @@ class EnrichmentService:
         doi_encontrado: Optional[str] = item.doi
         raw_responses: List[Dict[str, Any]] = []
 
+        t_start = datetime.utcnow()
         try:
             # ----------------------------------------------------
             # FASE 1: Búsqueda en Fuentes Académicas
@@ -60,16 +61,29 @@ class EnrichmentService:
 
             # 1.2 Si no tiene DOI o la consulta por DOI no devolvió resultados, buscamos por título
             if not resultados and item.titulo and len(item.titulo.strip()) > 5:
+                clean_title = item.titulo.strip()
+
+                # 1.2.1 Coincidencia exacta de título en Semantic Scholar (/paper/search/match)
                 try:
-                    # Búsqueda primero en OpenAlex (optimizado para búsqueda difusa)
-                    candidatos = await self.metadata_service.search_metadata(item.titulo.strip(), source="openalex", limit_per_source=3)
-                    if candidatos:
-                        resultados.extend(candidatos)
-                    else:
-                        # Si no hay en OpenAlex, probamos en todas las fuentes
-                        resultados = await self.metadata_service.search_metadata(item.titulo.strip(), limit_per_source=2)
-                except Exception as e:
-                    print(f"Error consultando por título '{item.titulo}': {e}")
+                    from app.clients.semantic_scholar_client import get_by_exact_title_semantic_scholar
+                    ss_exact = await get_by_exact_title_semantic_scholar(clean_title)
+                    if ss_exact:
+                        resultados.append(ss_exact)
+                except Exception as e_ss:
+                    print(f"Error consultando coincidencia exacta en Semantic Scholar por '{clean_title}': {e_ss}")
+
+                # 1.2.2 Búsqueda en OpenAlex y otras fuentes académicas
+                if not resultados:
+                    try:
+                        # Búsqueda primero en OpenAlex (optimizado para búsqueda difusa)
+                        candidatos = await self.metadata_service.search_metadata(clean_title, source="openalex", limit_per_source=3)
+                        if candidatos:
+                            resultados.extend(candidatos)
+                        else:
+                            # Si no hay en OpenAlex, probamos en todas las fuentes
+                            resultados = await self.metadata_service.search_metadata(clean_title, limit_per_source=2)
+                    except Exception as e:
+                        print(f"Error consultando por título '{clean_title}': {e}")
 
             # 1.3 Procesar y combinar los metadatos obtenidos de las fuentes
             if resultados:
@@ -195,6 +209,10 @@ class EnrichmentService:
                         elif item.estado == "NO_ENCONTRADO":
                             item.estado = "CLASIFICADO_LLM"
 
+            # Calcular tiempo total de ejecución
+            t_total_seconds = max(0.05, (datetime.utcnow() - t_start).total_seconds())
+            t_total_ms = int(t_total_seconds * 1000)
+
             # Incorporar metadatos enriquecidos en el campo 'metadatos_recuperados' de dspace_enrichment_queue
             item.metadatos_recuperados = {
                 "abstract": item.abstract_enriquecido,
@@ -206,6 +224,8 @@ class EnrichmentService:
                 "sources": list(sorted(fuentes_utilizadas)) if fuentes_utilizadas else [],
                 "area_ocde": item.area_ocde,
                 "area_ods": item.area_ods,
+                "tiempo_ejecucion_ms": t_total_ms,
+                "tiempo_ejecucion_segundos": round(t_total_seconds, 2),
                 "raw_responses": raw_responses if raw_responses else [],
                 "recovered_at": datetime.utcnow().isoformat()
             }

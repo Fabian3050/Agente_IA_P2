@@ -231,85 +231,40 @@ const calculatedDonutSlices = computed(() => {
 onMounted(async () => {
   loading.value = true
   try {
-    const [queueStats, proposals, auditLogs, countMissing] = await Promise.all([
-      proposalService.getQueueStats(),
-      proposalService.listProposals(),
-      auditService.getAuditLogs(),
-      proposalService.getCountMissing(false)
-    ])
+    const stats = await proposalService.getDashboardStats()
+    if (stats) {
+      totalMonitoreados.value = stats.total_monitoreados || 0
+      registrosIncompletos.value = stats.registros_incompletos || 0
+      metadatosEnriquecidos.value = stats.metadatos_enriquecidos || 0
+      pendientesValidacion.value = stats.pendientes_validacion || 0
+      porcentajeCompletitud.value = stats.porcentaje_completitud ?? 100
+      tiempoPromedio.value = stats.tiempo_promedio || '--'
 
-    // Estadísticas reales
-    const totalCola = queueStats?.total_en_cola || 0
-    const totalEvaluados = countMissing?.total_evaluados || totalCola || proposals.length
-    totalMonitoreados.value = totalEvaluados
-
-    const porEstado = queueStats?.por_estado || {}
-    const pendientes = (porEstado['PENDIENTE'] || 0) + (porEstado['EN_PROCESO'] || 0)
-    registrosIncompletos.value = pendientes || proposals.filter((p: any) => p.status === 'DETECTED' || p.status === 'PENDING').length
-
-    const enriquecidos = (porEstado['ENRIQUECIDO'] || 0) + proposals.filter((p: any) => p.status === 'APPROVED' || p.status === 'LOADED_TO_DSPACE').length
-    metadatosEnriquecidos.value = enriquecidos
-
-    pendientesValidacion.value = proposals.filter((p: any) => p.status === 'PENDING_CURATION' || p.status === 'VALIDATING').length
-
-    if (totalMonitoreados.value > 0) {
-      const comp = Math.round(((totalMonitoreados.value - registrosIncompletos.value) / totalMonitoreados.value) * 100)
-      porcentajeCompletitud.value = Math.max(0, Math.min(100, comp))
-    } else {
-      porcentajeCompletitud.value = 100
-    }
-
-    tiempoPromedio.value = enriquecidos > 0 ? '1m 24s' : '0s'
-
-    // Distribución real de campos faltantes
-    if (proposals.length > 0) {
-      let absCount = 0
-      let kwCount = 0
-      let ocdeCount = 0
-      let odsCount = 0
-      let rightsCount = 0
-
-      for (const p of proposals) {
-        const field = (p.field_name || p.field || '').toLowerCase()
-        if (field.includes('abstract') || field.includes('description')) absCount++
-        else if (field.includes('subject') || field.includes('keyword')) kwCount++
-        else if (field.includes('ocde')) ocdeCount++
-        else if (field.includes('ods')) odsCount++
-        else if (field.includes('rights') || field.includes('license')) rightsCount++
-        else absCount++
+      if (Array.isArray(stats.donut_data) && stats.donut_data.length > 0) {
+        donutData.value = stats.donut_data
       }
+      if (Array.isArray(stats.bar_data) && stats.bar_data.length > 0) {
+        barData.value = stats.bar_data
+      }
+      if (Array.isArray(stats.recent_activity) && stats.recent_activity.length > 0) {
+        recentActivity.value = stats.recent_activity.map((log: any) => {
+          const d = new Date(log.timestamp)
+          const dateStr = d.toLocaleDateString('es-CL', { day: '2-digit', month: 'short' })
+          const timeStr = d.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })
+          const action = log.action || 'Acción'
+          const isApproved = action.toLowerCase().includes('aprob')
+          const isRejected = action.toLowerCase().includes('rechaz')
 
-      const totalFields = absCount + kwCount + ocdeCount + odsCount + rightsCount || 1
-      donutData.value = [
-        { name: 'Abstract', value: Math.round((absCount / totalFields) * 100), color: '#00aea7' },
-        { name: 'Palabras clave', value: Math.round((kwCount / totalFields) * 100), color: '#F57C00' },
-        { name: 'Área OCDE', value: Math.round((ocdeCount / totalFields) * 100), color: '#7B1FA2' },
-        { name: 'Área ODS', value: Math.round((odsCount / totalFields) * 100), color: '#2E7D32' },
-        { name: 'Derechos de acceso', value: Math.round((rightsCount / totalFields) * 100), color: '#E53935' },
-      ]
-    }
-
-    // Actividad real de auditoría
-    if (auditLogs && auditLogs.length > 0) {
-      recentActivity.value = auditLogs.slice(0, 10).map((log: any) => {
-        const d = new Date(log.timestamp)
-        const dateStr = d.toLocaleDateString('es-CL', { day: '2-digit', month: 'short' })
-        const timeStr = d.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit' })
-        const action = log.action || 'Acción'
-        const isApproved = action.toLowerCase().includes('aprob')
-        const isRejected = action.toLowerCase().includes('rechaz')
-
-        return {
-          icon: isApproved ? CheckCircle : isRejected ? AlertTriangle : AlertCircle,
-          color: isApproved ? '#2E7D32' : isRejected ? '#E53935' : '#00aea7',
-          text: `${action} registro #${log.item_id?.substring(0, 8) || ''}`,
-          date: dateStr,
-          time: timeStr,
-          user: log.user_name || log.role || 'Curador'
-        }
-      })
-    } else {
-      recentActivity.value = []
+          return {
+            icon: isApproved ? CheckCircle : isRejected ? AlertTriangle : AlertCircle,
+            color: isApproved ? '#2E7D32' : isRejected ? '#E53935' : '#00aea7',
+            text: `${action} registro #${log.item_id?.substring(0, 8) || ''}`,
+            date: dateStr,
+            time: timeStr,
+            user: log.user_name || log.role || 'Curador'
+          }
+        })
+      }
     }
   } catch (err) {
     console.error('Error cargando métricas reales de dashboard:', err)

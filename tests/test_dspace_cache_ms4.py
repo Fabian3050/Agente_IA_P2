@@ -212,12 +212,8 @@ class TestDSpaceCacheMS4(unittest.IsolatedAsyncioTestCase):
         mock_query.count.return_value = 45
         mock_query.all.return_value = []
         
-        try:
-            from common.database import get_db
-        except ImportError:
-            from services.common.database import get_db
-
-        app.dependency_overrides[get_db] = lambda: mock_db
+        from services.ms4_orchestrator.api.dspace_router import get_db as router_get_db
+        app.dependency_overrides[router_get_db] = lambda: mock_db
         
         resp_queue = client.get("/dspace/enrichment-queue?page=1&size=15&q=solar&estado=PENDIENTE,EN_PROCESO")
         self.assertEqual(resp_queue.status_code, 200)

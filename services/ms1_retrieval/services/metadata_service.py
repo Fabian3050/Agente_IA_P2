@@ -7,7 +7,12 @@ except (ImportError, AttributeError):
 from clients.crossref_client import search_crossref, get_by_doi_crossref, get_doi_by_title_and_abstract_crossref
 from clients.openalex_client import OpenAlexClient
 import httpx
-from clients.semantic_scholar_client import search_semantic_scholar, get_by_doi_semantic_scholar, get_doi_by_title_and_abstract_semantic_scholar
+from clients.semantic_scholar_client import (
+    search_semantic_scholar,
+    get_by_doi_semantic_scholar,
+    get_doi_by_title_and_abstract_semantic_scholar,
+    get_by_exact_title_semantic_scholar
+)
 from clients.europe_pmc_client import search_europe_pmc, get_by_doi_europe_pmc, get_doi_by_title_and_abstract_europe_pmc
 from clients.unpaywall_client import search_unpaywall, get_metadata_by_doi_unpaywall
 
@@ -55,6 +60,13 @@ class MetadataService:
 
         return combined_results
 
+    async def get_metadata_by_exact_title(self, title: str) -> Optional[MetadataResponse]:
+        """
+        Coincidencia exacta de título: recupera metadatos exactos de una publicación
+        a partir de su título utilizando el endpoint específico de Semantic Scholar (/paper/search/match).
+        """
+        return await get_by_exact_title_semantic_scholar(title)
+
     async def get_metadata_by_doi(self, doi: str, source: Optional[str] = None) -> List[MetadataResponse]:
         source_functions = {
             "crossref": get_by_doi_crossref,
@@ -83,4 +95,11 @@ class MetadataService:
                 print(f"Error consultando DOI en una de las fuentes: {res}")
 
         return combined_results
+
+    async def get_metadata_by_exact_title(self, title: str) -> Optional[MetadataResponse]:
+        """
+        Coincidencia exacta de título: recupera metadatos exactos de una publicación
+        a partir de su título utilizando el endpoint específico de Semantic Scholar (/paper/search/match).
+        """
+        return await get_by_exact_title_semantic_scholar(title)
 

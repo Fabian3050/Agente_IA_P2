@@ -48,6 +48,7 @@ export interface MonitoreoRecord {
   fecha: string
   prioridad: 'Alta' | 'Media' | 'Baja'
   estado: ProposalState | string
+  rawEstado?: string
   completitud: number
   completitudPre: number
   completitudDetalle?: {

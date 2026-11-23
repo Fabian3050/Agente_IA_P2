@@ -1,9 +1,33 @@
 <template>
-  <div class="h-full overflow-y-auto">
+  <div class="h-full overflow-y-auto space-y-4">
     <SectionHeader
       title="Validación de metadatos"
       description="Asegure la calidad de los metadatos antes de su aprobación final."
     />
+
+    <!-- Banner exclusivo para Perfil Académico -->
+    <div
+      v-if="user?.role === 'Academico'"
+      class="p-4 bg-blue-50/80 border border-blue-200 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-blue-900 shadow-2xs"
+    >
+      <div class="flex items-center gap-3">
+        <div class="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center flex-shrink-0 font-bold shadow-xs">
+          <ShieldCheck :size="18" />
+        </div>
+        <div>
+          <p class="font-bold text-sm text-blue-950">Sesión Académica USACH</p>
+          <p class="text-[11px] text-blue-800">
+            Mostrando exclusivamente las publicaciones pendientes de validación asociadas a su ORCID:
+            <span class="font-mono font-semibold bg-white/90 px-2 py-0.5 rounded border border-blue-300 ml-1 select-all text-blue-900">
+              {{ user?.orcid || '0000-0001-9876-5432' }}
+            </span>
+          </p>
+        </div>
+      </div>
+      <span class="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200 self-start sm:self-center">
+        Validación por Autor
+      </span>
+    </div>
 
     <Card>
       <div class="p-4 border-b border-gray-50 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -39,7 +63,7 @@
           <thead>
             <tr class="border-b border-gray-50 bg-slate-50/50">
               <th
-                v-for="h in ['ID & Título', 'Campo evaluado', 'Fuente', 'Confianza IA', 'Acciones']"
+                v-for="h in ['ID & Título', 'DOI', 'Campo evaluado', 'Fuente', 'Confianza Enriquecimiento', 'Acciones']"
                 :key="h"
                 class="text-left px-4 py-3.5 text-[11px] font-semibold text-[#6b7a90] uppercase tracking-wide"
               >
@@ -49,14 +73,23 @@
           </thead>
           <tbody>
             <tr v-if="loading">
-              <td colspan="5" class="text-center py-12 text-slate-500 text-xs">
+              <td colspan="6" class="text-center py-12 text-slate-500 text-xs">
                 <div class="inline-block w-4 h-4 border-2 border-[#00aea7] border-t-transparent rounded-full animate-spin mr-2"></div>
                 Cargando propuestas reales de metadatos para validación...
               </td>
             </tr>
             <tr v-else-if="filtered.length === 0">
-              <td colspan="5" class="text-center py-12 text-slate-500 text-xs">
-                No hay metadatos pendientes de validación técnica en este momento.
+              <td colspan="6" class="text-center py-12 text-slate-500 text-xs">
+                <p class="font-medium text-slate-600 mb-1">
+                  {{ user?.role === 'Academico'
+                    ? `No se encontraron publicaciones pendientes de validación asociadas a su ORCID (${user?.orcid || '0000-0001-9876-5432'}).`
+                    : 'No hay metadatos pendientes de validación técnica en este momento.' }}
+                </p>
+                <p class="text-[11px] text-slate-400">
+                  {{ user?.role === 'Academico'
+                    ? 'Cuando existan publicaciones con puntaje de coincidencia menor al 80% vinculadas a su identificador, aparecerán aquí para su validación.'
+                    : 'Los registros con coincidencia algorítmica menor al 80% aparecerán aquí para revisión manual.' }}
+                </p>
               </td>
             </tr>
             <tr
@@ -67,7 +100,21 @@
             >
               <td class="px-4 py-3.5 max-w-[220px]">
                 <span class="text-xs font-mono font-bold text-[#1565C0]">#{{ row.id }}</span>
-                <p class="text-xs font-medium text-[#1a2332] truncate mt-0.5">{{ row.title }}</p>
+                <p class="text-xs font-medium text-[#1a2332] truncate mt-0.5" :title="row.title">{{ row.title }}</p>
+              </td>
+              <td class="px-4 py-3.5 whitespace-nowrap">
+                <a
+                  v-if="row.doi"
+                  :href="formatDoiUrl(row.doi)"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="inline-flex items-center gap-1.5 text-xs font-mono font-medium text-[#1565C0] hover:text-[#0d47a1] hover:underline bg-blue-50/70 hover:bg-blue-100/70 px-2.5 py-1 rounded-md border border-blue-200 transition-colors"
+                  :title="`Abrir documento oficial en doi.org: ${row.doi}`"
+                >
+                  <span>{{ row.doi }}</span>
+                  <ExternalLink :size="11" class="text-blue-500 shrink-0" />
+                </a>
+                <span v-else class="text-[11px] text-slate-400 font-mono italic">Sin DOI</span>
               </td>
               <td class="px-4 py-3.5 whitespace-nowrap">
                 <span class="text-xs font-semibold px-2.5 py-1 bg-blue-50 text-blue-700 rounded-md border border-blue-100">
@@ -151,6 +198,18 @@
           <div>
             <span class="text-[10px] font-bold uppercase tracking-wider text-[#00aea7] block mb-1">ID Registro #{{ selectedVal.id }}</span>
             <h4 class="text-base font-bold text-slate-800 leading-snug">{{ selectedVal.title }}</h4>
+            <div v-if="selectedVal.doi" class="mt-2">
+              <a
+                :href="formatDoiUrl(selectedVal.doi)"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="inline-flex items-center gap-1.5 text-xs font-mono font-medium text-[#1565C0] hover:text-[#0d47a1] hover:underline bg-blue-50/70 hover:bg-blue-100/70 px-2.5 py-1 rounded-md border border-blue-200 transition-colors"
+                :title="`Abrir documento oficial en doi.org: ${selectedVal.doi}`"
+              >
+                <span>{{ selectedVal.doi }}</span>
+                <ExternalLink :size="11" class="text-blue-500 shrink-0" />
+              </a>
+            </div>
           </div>
 
           <div class="p-4 rounded-xl bg-slate-50 border border-slate-200/60 space-y-3">
@@ -197,10 +256,15 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { Search, Cpu, ShieldCheck, Eye, X } from 'lucide-vue-next'
+import { Search, Cpu, ShieldCheck, Eye, X, ExternalLink } from 'lucide-vue-next'
 import Card from '../components/common/Card.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import { proposalService } from '../services/proposalService'
+import type { User } from '../types'
+
+const props = defineProps<{
+  user?: User | null
+}>()
 
 const searchVal = ref('')
 const filterStatus = ref('Todos')
@@ -208,25 +272,41 @@ const selectedVal = ref<any | null>(null)
 const loading = ref(true)
 const validationRecords = ref<any[]>([])
 
+const formatDoiUrl = (doi?: string): string => {
+  if (!doi) return '#'
+  const clean = doi.trim().replace(/^https?:\/\/(dx\.)?doi\.org\//i, '')
+  return `https://doi.org/${clean}`
+}
+
 const loadProposals = async () => {
   loading.value = true
   try {
-    const list = await proposalService.listProposals()
-    validationRecords.value = list.map((p: any) => ({
-      id: String(p.id || '').substring(0, 8),
-      fullId: p.id,
-      title: p.title || 'Publicación Científica',
-      campo: p.field_name || p.field || 'Metadato',
-      propuestaIA: p.suggested_value || p.new_value || p.value || 'Valor propuesto por el motor de enriquecimiento',
-      fuenteHerramienta: p.source || p.best_source || 'Motor IA / OpenAlex',
-      sintaxis: p.status || 'En validación',
-      confianza: p.confidence ? Math.round(p.confidence * 100) : 95,
-      color: '#2E7D32',
-      estado: p.status === 'VALIDATING' || p.status === 'PENDING_CURATION' ? 'Apto p/ Aprobación' : 'Apto p/ Aprobación',
-      detalle: p.notes || `Propuesta atómica para campo ${p.field_name || 'solicitado'} en repositorio DSpace-CRIS.`
-    }))
+    const isAcademico = props.user?.role === 'Academico'
+    const orcidParam = isAcademico && props.user?.orcid ? props.user.orcid : undefined
+    const list = await proposalService.getValidationRecords(orcidParam)
+    if (list && list.length > 0) {
+      validationRecords.value = list.map((p: any) => ({
+        id: String(p.id || '').substring(0, 8),
+        fullId: p.fullId || p.id,
+        rawId: p.id,
+        title: p.title || 'Publicación Científica',
+        doi: p.doi || p.candidate_doi || '',
+        campo: p.campo || 'Metadatos externos',
+        propuestaIA: p.propuestaIA || 'Valor propuesto por fuente externa',
+        fuenteHerramienta: p.fuenteHerramienta || 'Fuente Académica',
+        sintaxis: p.sintaxis || 'Validación manual requerida (Confianza < 80%)',
+        confianza: p.confianza !== undefined ? p.confianza : Math.round((p.match_score || 0.5) * 100),
+        color: (p.confianza || 0) >= 80 ? '#2E7D32' : '#F57C00',
+        estado: 'Pendiente de Validación',
+        detalle: p.detalle || 'Requiere validación manual por coincidencia menor al 80%.',
+        orcid: p.orcid || null
+      }))
+    } else {
+      validationRecords.value = []
+    }
   } catch (err) {
-    console.error('Error cargando propuestas reales de validación:', err)
+    console.error('Error cargando registros reales de validación:', err)
+    validationRecords.value = []
   } finally {
     loading.value = false
   }
@@ -239,7 +319,11 @@ onMounted(() => {
 const filtered = computed(() => {
   return validationRecords.value.filter((r) => {
     const s = searchVal.value.toLowerCase()
-    const matchSearch = r.title.toLowerCase().includes(s) || r.id.includes(s) || r.campo.toLowerCase().includes(s)
+    const matchSearch =
+      r.title.toLowerCase().includes(s) ||
+      r.id.includes(s) ||
+      r.campo.toLowerCase().includes(s) ||
+      (r.doi && r.doi.toLowerCase().includes(s))
     const matchFilter = filterStatus.value === 'Todos' || r.estado === filterStatus.value
     return matchSearch && matchFilter
   })
@@ -247,14 +331,13 @@ const filtered = computed(() => {
 
 const validateItem = async (item: any) => {
   try {
-    if (item.fullId) {
-      await proposalService.curateProposal(item.fullId, { action: 'APPROVE' })
-    }
-    item.estado = 'Apto p/ Aprobación'
-    alert(`¡Validación exitosa para el registro #${item.id}! El metadato ha sido aprobado para sincronización en DSpace-CRIS.`)
+    const targetId = item.rawId || item.fullId || item.id
+    await proposalService.validateRecord(targetId)
+    item.estado = 'Validado / Aprobado'
+    alert(`¡Validación exitosa para el registro #${item.id}! El metadato ha sido aprobado y marcado como enriquecido.`)
     await loadProposals()
-  } catch (err) {
-    alert(`Validación registrada para el registro #${item.id}.`)
+  } catch (err: any) {
+    alert(`Error al validar registro #${item.id}: ${err?.response?.data?.detail || err.message || err}`)
   }
 }
 </script>

@@ -4,7 +4,12 @@ from app.models.metadata_model import MetadataResponse
 from app.clients.crossref_client import search_crossref, get_by_doi_crossref, get_doi_by_title_and_abstract_crossref
 from app.clients.openalex_client import OpenAlexClient
 import httpx
-from app.clients.semantic_scholar_client import search_semantic_scholar, get_by_doi_semantic_scholar, get_doi_by_title_and_abstract_semantic_scholar
+from app.clients.semantic_scholar_client import (
+    search_semantic_scholar,
+    get_by_doi_semantic_scholar,
+    get_doi_by_title_and_abstract_semantic_scholar,
+    get_by_exact_title_semantic_scholar
+)
 from app.clients.europe_pmc_client import search_europe_pmc, get_by_doi_europe_pmc, get_doi_by_title_and_abstract_europe_pmc
 from app.clients.unpaywall_client import search_unpaywall, get_by_doi_unpaywall
 
@@ -143,7 +148,7 @@ class MetadataService:
         """
         if not title and not abstract:
             return None
-            
+
         if source:
             source = source.lower()
             if source == "crossref":
@@ -155,7 +160,7 @@ class MetadataService:
             elif source == "europepmc":
                 return await get_doi_by_title_and_abstract_europe_pmc(title, abstract)
             return None
-            
+
         tasks = [
             asyncio.create_task(get_doi_by_title_and_abstract_crossref(title, abstract)),
             asyncio.create_task(self._get_doi_by_title_and_abstract_openalex_wrapper(title, abstract)),
@@ -176,3 +181,10 @@ class MetadataService:
                 print(f"Error in concurrent DOI search: {e}")
                 
         return None
+
+    async def get_metadata_by_exact_title(self, title: str) -> Optional[MetadataResponse]:
+        """
+        Coincidencia exacta de título: recupera metadatos exactos de una publicación
+        a partir de su título utilizando el endpoint específico de Semantic Scholar (/paper/search/match).
+        """
+        return await get_by_exact_title_semantic_scholar(title)

@@ -187,6 +187,10 @@ class DSpaceEnrichmentQueue(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+
+
+
+
 # =============================================================================
 # ESQUEMAS PYDANTIC (DTOs)
 # =============================================================================

@@ -243,6 +243,415 @@ def get_enrichment_queue_stats(
         "por_estado": {estado: count for estado, count in stats}
     }
 
+@router.get("/dashboard-stats")
+def get_dashboard_stats(
+    db: Session = Depends(get_db)
+):
+    """
+    Retorna métricas consolidadas ultrarrápidas para el Dashboard consultando
+    directamente las tablas de la base de datos (dspace_enrichment_queue, candidate_match, audit_log).
+    """
+    import traceback
+    from sqlalchemy import func, or_, and_, text
+    from datetime import datetime, timedelta
+
+    try:
+        from app.models.db_models import DSpaceEnrichmentQueue
+    except ImportError:
+        try:
+            from models.db_models import DSpaceEnrichmentQueue
+        except ImportError:
+            DSpaceEnrichmentQueue = None
+
+    try:
+        if DSpaceEnrichmentQueue is None:
+            raise RuntimeError("DSpaceEnrichmentQueue model not found")
+
+        # 1. Total registros monitoreados
+        total_monitoreados = db.query(func.count(DSpaceEnrichmentQueue.id)).scalar() or 0
+
+        # 2. Metadatos enriquecidos (estado ENRIQUECIDO)
+        enriquecidos_query = db.query(DSpaceEnrichmentQueue).filter(DSpaceEnrichmentQueue.estado == "ENRIQUECIDO")
+        metadatos_enriquecidos = enriquecidos_query.count()
+
+        # 3. Pendientes de validación (confianza / match_score < 0.8 / 80%)
+        candidate_uuid_set = set()
+        try:
+            low_candidates_raw = db.execute(text(
+                "SELECT id_item_enrichment FROM candidate_match WHERE match_score > 0.0 AND match_score < 0.8"
+            )).fetchall()
+            candidate_uuid_set = {str(r[0]) for r in low_candidates_raw if r[0]}
+        except Exception as e_cm:
+            print(f"[DashboardStats] Advertencia consultando candidate_match: {e_cm}")
+
+        pendientes_val_ids = set()
+        try:
+            pendientes_val_items = db.query(DSpaceEnrichmentQueue).filter(
+                or_(
+                    DSpaceEnrichmentQueue.estado.in_(["PENDIENTE_VALIDACION", "VALIDACION", "COINCIDENCIA_DUDOSA"]),
+                    and_(
+                        DSpaceEnrichmentQueue.estado != "ENRIQUECIDO",
+                        DSpaceEnrichmentQueue.dspace_uuid.in_(list(candidate_uuid_set))
+                    ) if candidate_uuid_set else False
+                )
+            ).all()
+            pendientes_val_ids = {it.id for it in pendientes_val_items}
+        except Exception as e_val:
+            print(f"[DashboardStats] Advertencia consultando pendientes_val_items: {e_val}")
+
+        all_queue_not_enriched = db.query(DSpaceEnrichmentQueue).filter(DSpaceEnrichmentQueue.estado != "ENRIQUECIDO").all()
+        for it in all_queue_not_enriched:
+            if it.id not in pendientes_val_ids and it.metadatos_recuperados:
+                rec = it.metadatos_recuperados if isinstance(it.metadatos_recuperados, dict) else {}
+                ms = rec.get("max_score")
+                if ms is not None and 0.0 < float(ms) < 0.8:
+                    pendientes_val_ids.add(it.id)
+
+        pendientes_validacion = len(pendientes_val_ids)
+
+        # 4. Registros incompletos (total - enriquecidos)
+        registros_incompletos = max(0, total_monitoreados - metadatos_enriquecidos)
+
+        # 5. Porcentaje de completitud: metadatos enriquecidos sobre total monitoreados
+        if total_monitoreados > 0:
+            porcentaje_completitud = round((metadatos_enriquecidos / total_monitoreados) * 100, 1)
+        else:
+            porcentaje_completitud = 100.0
+
+        # 6. Tiempo promedio de ejecución por registro enriquecido
+        enriched_items = enriquecidos_query.all()
+        suma_segundos = 0.0
+        count_tiempos = 0
+
+        for it in enriched_items:
+            rec = it.metadatos_recuperados if isinstance(it.metadatos_recuperados, dict) else {}
+            t_sec = rec.get("tiempo_ejecucion_segundos")
+            t_ms = rec.get("tiempo_ejecucion_ms")
+            if t_sec is not None and float(t_sec) > 0:
+                suma_segundos += float(t_sec)
+                count_tiempos += 1
+            elif t_ms is not None and float(t_ms) > 0:
+                suma_segundos += float(t_ms) / 1000.0
+                count_tiempos += 1
+            elif it.updated_at and it.created_at:
+                diff = (it.updated_at - it.created_at).total_seconds()
+                if 0.5 <= diff <= 300.0:
+                    suma_segundos += diff
+                    count_tiempos += 1
+
+        if metadatos_enriquecidos > 0 and (count_tiempos > 0 or suma_segundos > 0):
+            prom_sec = suma_segundos / max(count_tiempos, 1)
+            prom_sec = round(prom_sec, 1)
+            if prom_sec >= 60:
+                m = int(prom_sec // 60)
+                s = int(prom_sec % 60)
+                tiempo_promedio = f"{m}m {s}s"
+            else:
+                tiempo_promedio = f"{int(prom_sec)}s"
+        else:
+            prom_sec = 0.0
+            tiempo_promedio = "--"
+
+        # 7. Distribución de metadatos incompletos (Donut Chart)
+        # Compatible con PostgreSQL y SQLite (evaluación segura sin JSON == "[]" en SQL)
+        sin_abstract = 0
+        sin_kw = 0
+        sin_ocde = 0
+        sin_ods = 0
+        sin_rights = 0
+
+        all_items_queue = db.query(
+            DSpaceEnrichmentQueue.abstract_enriquecido,
+            DSpaceEnrichmentQueue.palabras_clave,
+            DSpaceEnrichmentQueue.area_ocde,
+            DSpaceEnrichmentQueue.area_ods,
+            DSpaceEnrichmentQueue.derechos_acceso,
+            DSpaceEnrichmentQueue.licencia,
+            DSpaceEnrichmentQueue.tipo_falencia
+        ).all()
+
+        for it_row in all_items_queue:
+            abs_val, kw_val, ocde_val, ods_val, rights_val, lic_val, fal_val = it_row
+            fal_str = str(fal_val or "").upper()
+            if not abs_val or "SIN_ABSTRACT" in fal_str:
+                sin_abstract += 1
+            if not kw_val or kw_val == [] or kw_val == "[]" or "SIN_PALABRAS_CLAVE" in fal_str:
+                sin_kw += 1
+            if not ocde_val or ocde_val == [] or ocde_val == "[]" or "SIN_AREA_OCDE" in fal_str:
+                sin_ocde += 1
+            if not ods_val or ods_val == [] or ods_val == "[]" or "SIN_AREA_ODS" in fal_str:
+                sin_ods += 1
+            if (not rights_val and not lic_val) or "SIN_DERECHOS" in fal_str or "SIN_LICENCIA" in fal_str:
+                sin_rights += 1
+
+        total_faltantes = sin_abstract + sin_kw + sin_ocde + sin_ods + sin_rights or 1
+        donut_data = [
+            {"name": "Abstract", "value": round((sin_abstract / total_faltantes) * 100), "color": "#00aea7"},
+            {"name": "Palabras clave", "value": round((sin_kw / total_faltantes) * 100), "color": "#F57C00"},
+            {"name": "Área OCDE", "value": round((sin_ocde / total_faltantes) * 100), "color": "#7B1FA2"},
+            {"name": "Área ODS", "value": round((sin_ods / total_faltantes) * 100), "color": "#2E7D32"},
+            {"name": "Derechos de acceso", "value": round((sin_rights / total_faltantes) * 100), "color": "#E53935"},
+        ]
+
+        # 8. Registros enriquecidos esta semana (Bar Chart)
+        dias_nombres = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
+        hoy = datetime.utcnow()
+        inicio_semana = hoy - timedelta(days=hoy.weekday())
+        inicio_semana = inicio_semana.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        conteos_por_dia = {d: 0 for d in dias_nombres}
+        enriquecidos_semana = db.query(DSpaceEnrichmentQueue.updated_at).filter(
+            DSpaceEnrichmentQueue.estado == "ENRIQUECIDO",
+            DSpaceEnrichmentQueue.updated_at >= inicio_semana
+        ).all()
+
+        for row in enriquecidos_semana:
+            if row[0]:
+                idx = row[0].weekday()
+                if 0 <= idx < 7:
+                    conteos_por_dia[dias_nombres[idx]] += 1
+
+        bar_data = [{"day": d, "value": conteos_por_dia[d]} for d in dias_nombres]
+
+        # 9. Actividad reciente de auditoría (AuditLog)
+        recent_activity = []
+        try:
+            log_rows = db.execute(text(
+                "SELECT action, user_name, role, item_id, timestamp FROM audit_log ORDER BY timestamp DESC LIMIT 10"
+            )).fetchall()
+            for lr in log_rows:
+                recent_activity.append({
+                    "action": lr[0] or "Acción",
+                    "user_name": lr[1] or "Curador",
+                    "role": lr[2] or "Curador",
+                    "item_id": str(lr[3]) if lr[3] else "",
+                    "timestamp": lr[4].isoformat() if hasattr(lr[4], "isoformat") else str(lr[4])
+                })
+        except Exception as e_log:
+            print(f"[DashboardStats] Advertencia consultando audit_log: {e_log}")
+
+        return {
+            "total_monitoreados": total_monitoreados,
+            "registros_incompletos": registros_incompletos,
+            "metadatos_enriquecidos": metadatos_enriquecidos,
+            "pendientes_validacion": pendientes_validacion,
+            "porcentaje_completitud": porcentaje_completitud,
+            "tiempo_promedio": tiempo_promedio,
+            "tiempo_promedio_segundos": prom_sec,
+            "donut_data": donut_data,
+            "bar_data": bar_data,
+            "recent_activity": recent_activity
+        }
+    except Exception as err:
+        print(f"[DashboardStats] Error crítico generando estadísticas del Dashboard:")
+        traceback.print_exc()
+        return {
+            "total_monitoreados": 0,
+            "registros_incompletos": 0,
+            "metadatos_enriquecidos": 0,
+            "pendientes_validacion": 0,
+            "porcentaje_completitud": 100.0,
+            "tiempo_promedio": "--",
+            "tiempo_promedio_segundos": 0.0,
+            "donut_data": [],
+            "bar_data": [{"day": d, "value": 0} for d in ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]],
+            "recent_activity": []
+        }
+
+@router.get("/validation-records")
+def get_validation_records(
+    orcid: Optional[str] = Query(None, description="ORCID del investigador para filtrar publicaciones"),
+    db: Session = Depends(get_db)
+):
+    """
+    Retorna los registros que requieren validación manual debido a que el match_score
+    o puntaje de confianza en candidate_match es menor al 80% (0.8).
+    Si se proporciona un ORCID (Perfil Académico), filtra exclusivamente las publicaciones asociadas.
+    """
+    from sqlalchemy import text
+
+    try:
+        from app.models.db_models import DSpaceEnrichmentQueue
+    except ImportError:
+        try:
+            from models.db_models import DSpaceEnrichmentQueue
+        except ImportError:
+            DSpaceEnrichmentQueue = None
+
+    if DSpaceEnrichmentQueue is None:
+        return []
+
+    scores_by_uuid = {}
+    try:
+        low_candidates_raw = db.execute(text(
+            "SELECT id_item_enrichment, match_score FROM candidate_match WHERE match_score > 0.0 AND match_score < 0.8"
+        )).fetchall()
+
+        for r in low_candidates_raw:
+            uid_str = str(r[0])
+            score = float(r[1])
+            if uid_str not in scores_by_uuid or score > scores_by_uuid[uid_str]:
+                scores_by_uuid[uid_str] = score
+    except Exception as e_cm:
+        print(f"[ValidationRecords] Advertencia consultando candidate_match: {e_cm}")
+
+    items = db.query(DSpaceEnrichmentQueue).filter(
+        DSpaceEnrichmentQueue.estado != "ENRIQUECIDO"
+    ).all()
+
+    validation_items = []
+    for it in items:
+        uid = it.dspace_uuid or str(it.id)
+        score = scores_by_uuid.get(uid)
+
+        rec = it.metadatos_recuperados if isinstance(it.metadatos_recuperados, dict) else {}
+        if score is None and rec.get("max_score") is not None:
+            ms = float(rec.get("max_score", 0.0) or 0.0)
+            if 0.0 < ms < 0.8:
+                score = ms
+
+        is_pending = it.estado in ["PENDIENTE_VALIDACION", "VALIDACION", "COINCIDENCIA_DUDOSA"] or (score is not None and score < 0.8)
+
+        if is_pending:
+            # Extracción y filtrado por ORCID (Perfil Académico)
+            item_orcid = rec.get("orcid") or rec.get("author_orcid")
+            if not item_orcid and isinstance(rec.get("authors"), list):
+                for a in rec.get("authors"):
+                    if isinstance(a, dict) and a.get("orcid"):
+                        item_orcid = a.get("orcid")
+                        break
+
+            if orcid:
+                target_orcid = orcid.strip().lower()
+                matches_orcid = False
+                if item_orcid and target_orcid in str(item_orcid).lower():
+                    matches_orcid = True
+                elif target_orcid in str(rec).lower():
+                    matches_orcid = True
+                elif target_orcid in str(it.titulo or "").lower() or target_orcid in str(it.doi or "").lower():
+                    matches_orcid = True
+
+                if not matches_orcid:
+                    continue
+
+            confianza_pct = int(round((score or 0.5) * 100))
+            campos = []
+            if it.abstract_enriquecido or rec.get("abstract"):
+                campos.append("Resumen")
+            if it.palabras_clave or rec.get("keywords"):
+                campos.append("Palabras clave")
+            if it.area_ocde or rec.get("area_ocde"):
+                campos.append("Área OCDE")
+            if it.area_ods or rec.get("area_ods"):
+                campos.append("Área ODS")
+            if it.derechos_acceso or rec.get("access_rights"):
+                campos.append("Derechos de acceso")
+            if it.fuente_financiamiento or rec.get("funding"):
+                campos.append("Financiamiento")
+
+            campo_str = ", ".join(campos) if campos else (it.tipo_falencia or "Metadatos externos")
+            propuesta_str = it.abstract_enriquecido or rec.get("abstract") or "Metadatos externos recuperados con confianza moderada"
+
+            validation_items.append({
+                "id": str(it.id),
+                "fullId": str(it.id),
+                "dspace_uuid": it.dspace_uuid,
+                "title": it.titulo or "Publicación Científica",
+                "doi": it.doi or rec.get("doi"),
+                "campo": campo_str,
+                "propuestaIA": propuesta_str,
+                "fuenteHerramienta": it.fuente_enriquecimiento or rec.get("best_source") or "Fuente Académica Externa",
+                "sintaxis": "Validación manual requerida (Confianza < 80%)",
+                "confianza": confianza_pct,
+                "match_score": score or (confianza_pct / 100.0),
+                "orcid": item_orcid,
+                "estado": "Pendiente de Validación",
+                "detalle": f"El puntaje de confianza algorítmica es {confianza_pct}% (menor al umbral del 80%). Se requiere revisión manual antes de consolidar en DSpace-CRIS."
+            })
+
+    return validation_items
+
+@router.post("/validation-records/{item_id}/validate")
+def validate_record(
+    item_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Aprueba manualmente la validación de un registro, marcándolo como ENRIQUECIDO.
+    """
+    from app.models.db_models import DSpaceEnrichmentQueue
+    item = db.query(DSpaceEnrichmentQueue).filter(DSpaceEnrichmentQueue.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail=f"No se encontró el registro con ID {item_id}")
+
+    item.estado = "ENRIQUECIDO"
+    item.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(item)
+    return {
+        "status": "VALIDATED",
+        "id": item.id,
+        "estado": item.estado,
+        "message": f"Registro #{item.id} validado y aprobado exitosamente como ENRIQUECIDO."
+    }
+
+@router.post("/enrichment-queue/{item_id}/approve")
+def approve_queue_item(
+    item_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Aprueba una publicación enriquecida en la cola, marcándola como SINCRONIZADO_DSPACE.
+    """
+    from app.models.db_models import DSpaceEnrichmentQueue
+    item = db.query(DSpaceEnrichmentQueue).filter(DSpaceEnrichmentQueue.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail=f"No se encontró el registro #{item_id}")
+    item.estado = "SINCRONIZADO_DSPACE"
+    item.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(item)
+    return {"status": "APPROVED", "id": item.id, "estado": item.estado}
+
+@router.post("/enrichment-queue/{item_id}/reject")
+def reject_queue_item(
+    item_id: int,
+    db: Session = Depends(get_db)
+):
+    """
+    Rechaza una publicación enriquecida, reiniciándola a PENDIENTE para re-procesamiento.
+    """
+    from app.models.db_models import DSpaceEnrichmentQueue
+    item = db.query(DSpaceEnrichmentQueue).filter(DSpaceEnrichmentQueue.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail=f"No se encontró el registro #{item_id}")
+    item.estado = "PENDIENTE"
+    item.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(item)
+    return {"status": "REJECTED", "id": item.id, "estado": item.estado}
+
+@router.patch("/enrichment-queue/{item_id}")
+def edit_queue_item(
+    item_id: int,
+    payload: dict,
+    db: Session = Depends(get_db)
+):
+    """
+    Edita metadatos de un ítem enriquecido antes de aprobarlo.
+    """
+    from app.models.db_models import DSpaceEnrichmentQueue
+    item = db.query(DSpaceEnrichmentQueue).filter(DSpaceEnrichmentQueue.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail=f"No se encontró el registro #{item_id}")
+    if "valor" in payload and payload["valor"]:
+        item.abstract_enriquecido = str(payload["valor"])
+    item.estado = "SINCRONIZADO_DSPACE"
+    item.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(item)
+    return {"status": "EDITED_AND_APPROVED", "id": item.id, "estado": item.estado}
+
 @router.post("/enrich/{item_id}")
 async def enrich_item(
     item_id: int,

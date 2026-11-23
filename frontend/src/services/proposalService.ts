@@ -41,6 +41,48 @@ export const proposalService = {
     }
   },
 
+  async getDashboardStats(): Promise<any> {
+    try {
+      const res = await ms4Client.get('/dspace/dashboard-stats')
+      return res.data
+    } catch (err) {
+      console.error('Error obteniendo dashboard-stats desde BD:', err)
+      return null
+    }
+  },
+
+  async getValidationRecords(orcid?: string): Promise<any[]> {
+    try {
+      const res = await ms4Client.get('/dspace/validation-records', {
+        params: orcid ? { orcid } : undefined
+      })
+      return Array.isArray(res.data) ? res.data : []
+    } catch (err) {
+      console.error('Error obteniendo validation-records desde BD:', err)
+      return []
+    }
+  },
+
+  async validateRecord(itemId: string | number): Promise<any> {
+    const res = await ms4Client.post(`/dspace/validation-records/${itemId}/validate`)
+    return res.data
+  },
+
+  async approveQueueItem(id: number | string): Promise<any> {
+    const res = await ms4Client.post(`/dspace/enrichment-queue/${id}/approve`)
+    return res.data
+  },
+
+  async rejectQueueItem(id: number | string, reason?: string): Promise<any> {
+    const res = await ms4Client.post(`/dspace/enrichment-queue/${id}/reject`, { reason })
+    return res.data
+  },
+
+  async editQueueItem(id: number | string, data: any): Promise<any> {
+    const res = await ms4Client.patch(`/dspace/enrichment-queue/${id}`, data)
+    return res.data
+  },
+
   async getQueueStats(): Promise<{ total_en_cola: number; por_estado: Record<string, number> }> {
     try {
       const res = await ms4Client.get<any>('/dspace/enrichment-queue/stats')

@@ -54,6 +54,15 @@
             />
           </div>
           <div>
+            <label class="text-xs text-[#6b7a90] mb-1 block">Identificador ORCID</label>
+            <input
+              type="text"
+              :value="user?.orcid || (user?.role === 'Academico' ? '0000-0001-9876-5432' : '0000-0002-1825-0097')"
+              class="w-full px-3 py-2 text-xs border border-gray-200 rounded-lg bg-gray-50 text-[#1a2332] font-mono"
+              readonly
+            />
+          </div>
+          <div>
             <label class="text-xs text-[#6b7a90] mb-1 block">Unidad / Dirección</label>
             <input
               type="text"
@@ -138,15 +147,51 @@ const userInitials = computed(() => {
   return name.slice(0, 2).toUpperCase()
 })
 
-const permissions = [
-  { perm: 'Ver registros de repositorio', granted: true },
-  { perm: 'Aprobar metadatos (Curador)', granted: true },
-  { perm: 'Configurar microservicios IA', granted: true },
-  { perm: 'Gestionar usuarios RBAC', granted: true },
-  { perm: 'Exportar reportes CSV / PDF', granted: true },
-  { perm: 'Acceso a APIs científicas', granted: true },
-  { perm: 'Eliminar registros DSpace', granted: false },
-]
+const permissions = computed(() => {
+  const role = props.user?.role || 'Curador'
+  if (role === 'Administrador' || role === 'Admin') {
+    return [
+      { perm: 'Visualizar Dashboard institucional', granted: true },
+      { perm: 'Monitoreo de registros de repositorio', granted: true },
+      { perm: 'Validación de metadatos externos', granted: true },
+      { perm: 'Aprobación final de metadatos', granted: true },
+      { perm: 'Auditoría y trazabilidad global', granted: true },
+      { perm: 'Reportes y estadísticas avanzadas', granted: true },
+      { perm: 'Gestión de usuarios y roles RBAC', granted: true },
+      { perm: 'Configuración de microservicios IA', granted: true },
+      { perm: 'Visualizar perfil institucional', granted: true },
+    ]
+  }
+  if (role === 'Curador' || role === 'Curador_VRIIC') {
+    return [
+      { perm: 'Visualizar Dashboard institucional', granted: true },
+      { perm: 'Monitoreo de registros de repositorio', granted: true },
+      { perm: 'Validación de metadatos externos', granted: true },
+      { perm: 'Aprobación final de metadatos', granted: true },
+      { perm: 'Visualizar perfil institucional', granted: true },
+      { perm: 'Auditoría y trazabilidad global', granted: false },
+      { perm: 'Reportes y estadísticas avanzadas', granted: false },
+      { perm: 'Gestión de usuarios y roles RBAC', granted: false },
+      { perm: 'Configuración de microservicios IA', granted: false },
+    ]
+  }
+  if (role === 'Academico') {
+    return [
+      { perm: 'Validar publicaciones asociadas a ORCID', granted: true },
+      { perm: 'Visualizar perfil institucional', granted: true },
+      { perm: 'Visualizar Dashboard institucional', granted: false },
+      { perm: 'Monitoreo de registros de repositorio', granted: false },
+      { perm: 'Aprobación final de metadatos', granted: false },
+      { perm: 'Auditoría y trazabilidad global', granted: false },
+      { perm: 'Reportes y estadísticas avanzadas', granted: false },
+      { perm: 'Gestión de usuarios y roles RBAC', granted: false },
+      { perm: 'Configuración del sistema', granted: false },
+    ]
+  }
+  return [
+    { perm: 'Visualizar perfil institucional', granted: true },
+  ]
+})
 
 const saveProfile = () => {
   alert('Datos de perfil actualizados exitosamente.')

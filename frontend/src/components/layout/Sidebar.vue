@@ -43,7 +43,7 @@
     <!-- Navigation items -->
     <nav class="flex-1 py-3 overflow-y-auto">
       <button
-        v-for="item in navItems"
+        v-for="item in allowedNavItems"
         :key="item.key"
         @click="$emit('nav', item.key)"
         :title="collapsed ? item.label : undefined"
@@ -84,6 +84,7 @@
 </template>
 
 <script setup lang="ts">
+import { computed } from 'vue'
 import {
   LayoutDashboard,
   FileText,
@@ -93,14 +94,15 @@ import {
   BarChart2,
   Users,
   Settings,
-  User,
+  User as UserIcon,
   Menu
 } from 'lucide-vue-next'
-import type { Page } from '../../types'
+import type { Page, User } from '../../types'
 
-defineProps<{
+const props = defineProps<{
   current: Page
   collapsed: boolean
+  user?: User | null
 }>()
 
 defineEmits<{
@@ -108,7 +110,7 @@ defineEmits<{
   (e: 'toggle'): void
 }>()
 
-const navItems = [
+const allNavItems = [
   { key: 'dashboard' as Page, label: 'Dashboard', icon: LayoutDashboard },
   { key: 'monitoreo' as Page, label: 'Monitoreo de registros', icon: FileText },
   { key: 'validacion' as Page, label: 'Validación de metadatos', icon: ShieldCheck },
@@ -117,7 +119,29 @@ const navItems = [
   { key: 'reportes' as Page, label: 'Reportes y Estadísticas', icon: BarChart2 },
   { key: 'usuarios' as Page, label: 'Gestión de usuarios', icon: Users },
   { key: 'configuracion' as Page, label: 'Configuración', icon: Settings },
-  { key: 'perfil' as Page, label: 'Perfil', icon: User },
+  { key: 'perfil' as Page, label: 'Perfil', icon: UserIcon },
 ]
+
+/**
+ * Matriz de accesos y navegación estricta por rol (RBAC):
+ * - Academico: 'validacion' (solo sus publicaciones por ORCID) y 'perfil'.
+ * - Curador / Curador_VRIIC: 'dashboard', 'monitoreo', 'validacion', 'aprobacion' y 'perfil'.
+ * - Administrador / Admin: acceso total a las 9 secciones del sistema.
+ */
+const allowedNavItems = computed(() => {
+  const role = props.user?.role || 'Curador'
+  if (role === 'Administrador' || role === 'Admin') {
+    return allNavItems
+  }
+  if (role === 'Curador' || role === 'Curador_VRIIC') {
+    const allowed: Page[] = ['dashboard', 'monitoreo', 'validacion', 'aprobacion', 'perfil']
+    return allNavItems.filter(item => allowed.includes(item.key))
+  }
+  if (role === 'Academico') {
+    const allowed: Page[] = ['validacion', 'perfil']
+    return allNavItems.filter(item => allowed.includes(item.key))
+  }
+  return allNavItems.filter(item => item.key === 'perfil')
+})
 </script>
 

@@ -31,7 +31,9 @@ export function normalizeUser(apiUser: any): User {
     displayRole = 'Administrador'
   } else if (rawRole === 'Curador_VRIIC' || rawRole === 'Curador') {
     displayRole = 'Curador'
-  } else if (rawRole === 'Academico' || rawRole === 'Auditor') {
+  } else if (rawRole === 'Academico') {
+    displayRole = 'Academico'
+  } else if (rawRole === 'Auditor') {
     displayRole = 'Auditor'
   }
 
@@ -140,7 +142,7 @@ export const authService = {
     let role: 'Admin' | 'Curador_VRIIC' | 'Academico' = 'Curador_VRIIC'
     if (cleanEmail.includes('admin')) {
       role = 'Admin'
-    } else if (cleanEmail.includes('auditor') || cleanEmail.includes('investigador')) {
+    } else if (cleanEmail.includes('auditor') || cleanEmail.includes('investigador') || cleanEmail.includes('academico')) {
       role = 'Academico'
     }
 

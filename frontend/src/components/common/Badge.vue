@@ -21,6 +21,7 @@ const styles: Record<string, string> = {
   Media: 'bg-amber-50 text-amber-700 border border-amber-200',
   Baja: 'bg-blue-50 text-blue-600 border border-blue-200',
   Pendiente: 'bg-orange-50 text-orange-700 border border-orange-200',
+  'Pendiente de validación': 'bg-amber-50 text-amber-700 border border-amber-200',
   'En proceso': 'bg-teal-50 text-teal-700 border border-teal-200',
   'En recuperación': 'bg-blue-50 text-blue-700 border border-blue-200',
   'En clasificación': 'bg-purple-50 text-purple-700 border border-purple-200',
@@ -35,6 +36,7 @@ const styles: Record<string, string> = {
   Conectado: 'bg-green-50 text-green-700 border border-green-200',
   Administrador: 'bg-purple-50 text-purple-700 border border-purple-200',
   Curador: 'bg-teal-50 text-teal-700 border border-teal-200',
+  Academico: 'bg-blue-50 text-blue-700 border border-blue-200',
   Auditor: 'bg-blue-50 text-blue-700 border border-blue-200',
 }
 

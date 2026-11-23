@@ -11,7 +11,7 @@ from app.clients.crossref_client import get_by_doi_crossref, search_crossref
 from app.clients.openalex_client import OpenAlexClient, get_by_doi_openalex
 from app.clients.unpaywall_client import get_metadata_by_doi_unpaywall
 from app.clients.europe_pmc_client import get_by_doi_europe_pmc, search_europe_pmc
-from app.clients.semantic_scholar_client import get_by_doi_semantic_scholar, search_semantic_scholar
+from app.clients.semantic_scholar_client import get_by_doi_semantic_scholar, search_semantic_scholar, get_by_exact_title_semantic_scholar
 from app.services.matching_service import (
     evaluate_doi_match, evaluate_no_doi_match, calculate_similarity
 )
@@ -93,8 +93,11 @@ class MetadataRetrievalServiceMS1:
                                 meta = candidates[0].get("metadata")
                                 candidate_doi = meta.doi if meta else None
                         elif source_name == "Semantic Scholar":
-                            res_list = await search_semantic_scholar(item.title, limit=1)
-                            meta = res_list[0] if res_list else None
+                            # Priorizar coincidencia exacta de título (/paper/search/match)
+                            meta = await get_by_exact_title_semantic_scholar(item.title)
+                            if not meta:
+                                res_list = await search_semantic_scholar(item.title, limit=1)
+                                meta = res_list[0] if res_list else None
                         elif source_name == "Europe PMC":
                             res_list = await search_europe_pmc(item.title, limit=1)
                             meta = res_list[0] if res_list else None
