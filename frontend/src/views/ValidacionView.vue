@@ -94,7 +94,7 @@
             </tr>
             <tr
               v-else
-              v-for="row in filtered"
+              v-for="row in paginatedRecords"
               :key="row.id"
               class="border-b border-gray-50 hover:bg-gray-50/50 transition-colors"
             >
@@ -168,6 +168,12 @@
           </tbody>
         </table>
       </div>
+      <Pagination
+        v-if="filtered.length > 0"
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :total-items="filtered.length"
+      />
     </Card>
 
     <!-- Modal de Metadato Recuperado -->
@@ -255,10 +261,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { Search, Cpu, ShieldCheck, Eye, X, ExternalLink } from 'lucide-vue-next'
 import Card from '../components/common/Card.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
+import Pagination from '../components/common/Pagination.vue'
 import { proposalService } from '../services/proposalService'
 import { auditService } from '../services/auditService'
 import type { User } from '../types'
@@ -272,6 +279,13 @@ const filterStatus = ref('Todos')
 const selectedVal = ref<any | null>(null)
 const loading = ref(true)
 const validationRecords = ref<any[]>([])
+
+const currentPage = ref(1)
+const pageSize = ref(15)
+
+watch([searchVal, filterStatus], () => {
+  currentPage.value = 1
+})
 
 const formatDoiUrl = (doi?: string): string => {
   if (!doi) return '#'
@@ -328,6 +342,11 @@ const filtered = computed(() => {
     const matchFilter = filterStatus.value === 'Todos' || r.estado === filterStatus.value
     return matchSearch && matchFilter
   })
+})
+
+const paginatedRecords = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return filtered.value.slice(start, start + pageSize.value)
 })
 
 const validateItem = async (item: any) => {

@@ -71,8 +71,8 @@
             </tr>
             <tr
               v-else
-              v-for="(row, i) in pendingList"
-              :key="i"
+              v-for="(row, i) in paginatedPendingList"
+              :key="row.id || i"
               class="border-b border-gray-50 hover:bg-gray-50/40 transition-colors"
             >
               <td class="px-4 py-3.5 max-w-[240px]">
@@ -133,19 +133,19 @@
               </td>
               <td class="px-4 py-3.5 text-xs text-[#6b7a90] whitespace-nowrap">{{ row.responsable }}</td>
               <td class="px-4 py-3.5 whitespace-nowrap">
-                <div v-if="decisions[i]" class="flex items-center gap-2">
+                <div v-if="decisions[String(row.id || row.uuid)]" class="flex items-center gap-2">
                   <span
                     class="text-xs font-medium px-2 py-1 rounded-lg"
                     :style="{
-                      background: decisions[i] === 'aprobado' ? '#e8f5e9' : decisions[i] === 'rechazado' ? '#ffebee' : '#e3f2fd',
-                      color: decisions[i] === 'aprobado' ? '#2E7D32' : decisions[i] === 'rechazado' ? '#d32f2f' : '#1565C0',
+                      background: decisions[String(row.id || row.uuid)] === 'aprobado' ? '#e8f5e9' : decisions[String(row.id || row.uuid)] === 'rechazado' ? '#ffebee' : '#e3f2fd',
+                      color: decisions[String(row.id || row.uuid)] === 'aprobado' ? '#2E7D32' : decisions[String(row.id || row.uuid)] === 'rechazado' ? '#d32f2f' : '#1565C0',
                     }"
                   >
-                    {{ decisions[i] === 'aprobado' ? 'Aprobado' : decisions[i] === 'rechazado' ? 'Rechazado' : 'Editado' }}
+                    {{ decisions[String(row.id || row.uuid)] === 'aprobado' ? 'Aprobado' : decisions[String(row.id || row.uuid)] === 'rechazado' ? 'Rechazado' : 'Editado' }}
                   </span>
                   <button
-                    v-if="decisions[i] === 'rechazado'"
-                    @click="decisions[i] = ''"
+                    v-if="decisions[String(row.id || row.uuid)] === 'rechazado'"
+                    @click="delete decisions[String(row.id || row.uuid)]"
                     class="px-2 py-0.5 text-[10px] font-bold text-white bg-[#00aea7] rounded hover:opacity-90 transition-opacity cursor-pointer"
                   >
                     Re-procesar
@@ -160,20 +160,20 @@
                     <Bot :size="13" /> Comparar
                   </button>
                   <button
-                    @click="applyDecision(i, 'aprobado')"
+                    @click="applyDecision(row, 'aprobado')"
                     class="px-2.5 py-1 text-[11px] font-medium text-white rounded-lg hover:opacity-90 cursor-pointer shadow-sm"
                     style="background: #00aea7"
                   >
                     Aprobar
                   </button>
                   <button
-                    @click="openEditModal(row, i)"
+                    @click="openEditModal(row)"
                     class="px-2.5 py-1 text-[11px] font-medium text-[#F57C00] border border-[#F57C00]/30 rounded-lg hover:bg-[#F57C00]/5 cursor-pointer"
                   >
                     Editar
                   </button>
                   <button
-                    @click="applyDecision(i, 'rechazado')"
+                    @click="applyDecision(row, 'rechazado')"
                     class="px-2.5 py-1 text-[11px] font-medium text-[#d32f2f] border border-red-200 rounded-lg hover:bg-red-50 cursor-pointer"
                   >
                     Rechazar
@@ -184,6 +184,12 @@
           </tbody>
         </table>
       </div>
+      <Pagination
+        v-if="pendingList.length > 0"
+        v-model:current-page="pendingCurrentPage"
+        v-model:page-size="pendingPageSize"
+        :total-items="pendingList.length"
+      />
     </Card>
 
     <!-- Historial de Resoluciones Card -->
@@ -231,7 +237,7 @@
             </tr>
             <tr
               v-else
-              v-for="(row, idx) in filteredHistory"
+              v-for="(row, idx) in paginatedHistory"
               :key="idx"
               class="border-b border-gray-50 hover:bg-gray-50/50 transition-colors"
             >
@@ -273,6 +279,12 @@
           </tbody>
         </table>
       </div>
+      <Pagination
+        v-if="filteredHistory.length > 0"
+        v-model:current-page="historyCurrentPage"
+        v-model:page-size="historyPageSize"
+        :total-items="filteredHistory.length"
+      />
     </Card>
 
     <!-- Modal Comparar (DSpace vs IA) -->
@@ -363,19 +375,30 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { Bot, RefreshCw, Download, X, ExternalLink } from 'lucide-vue-next'
 import Card from '../components/common/Card.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
+import Pagination from '../components/common/Pagination.vue'
 import { proposalService } from '../services/proposalService'
 import { auditService } from '../services/auditService'
 import { authService } from '../services/authService'
 
-const decisions = ref<Record<number, string>>({})
+const decisions = ref<Record<string, string>>({})
 const comparingRow = ref<any | null>(null)
 const filterHistory = ref('Todos')
 const exporting = ref(false)
 const loading = ref(true)
+
+const pendingCurrentPage = ref(1)
+const pendingPageSize = ref(15)
+
+const historyCurrentPage = ref(1)
+const historyPageSize = ref(15)
+
+watch(filterHistory, () => {
+  historyCurrentPage.value = 1
+})
 
 const formatDoiUrl = (doi?: string): string => {
   if (!doi) return '#'
@@ -602,9 +625,19 @@ const filteredHistory = computed(() => {
   return history.value
 })
 
-const applyDecision = async (idx: number, decision: 'aprobado' | 'rechazado') => {
-  const row = pendingList.value[idx]
+const paginatedPendingList = computed(() => {
+  const start = (pendingCurrentPage.value - 1) * pendingPageSize.value
+  return pendingList.value.slice(start, start + pendingPageSize.value)
+})
+
+const paginatedHistory = computed(() => {
+  const start = (historyCurrentPage.value - 1) * historyPageSize.value
+  return filteredHistory.value.slice(start, start + historyPageSize.value)
+})
+
+const applyDecision = async (row: any, decision: 'aprobado' | 'rechazado') => {
   if (!row) return
+  const recordKey = String(row.id || row.uuid || '')
 
   // 1. Inmunidad inmediata ante refresco: registrar en almacenamiento local
   try {
@@ -661,7 +694,7 @@ const applyDecision = async (idx: number, decision: 'aprobado' | 'rechazado') =>
     }
   }
 
-  decisions.value[idx] = decision
+  decisions.value[recordKey] = decision
   if (decision === 'aprobado') countAprobados.value++
   if (decision === 'rechazado') countRechazados.value++
   countPendientes.value = Math.max(0, countPendientes.value - 1)
@@ -671,7 +704,7 @@ const applyDecision = async (idx: number, decision: 'aprobado' | 'rechazado') =>
     const currentIdx = pendingList.value.findIndex(p => p.id === row.id)
     if (currentIdx !== -1) {
       const [resolved] = pendingList.value.splice(currentIdx, 1)
-      delete decisions.value[idx]
+      delete decisions.value[recordKey]
       history.value.unshift({
         registro: resolved.registro,
         campo: resolved.campo,
@@ -686,10 +719,11 @@ const applyDecision = async (idx: number, decision: 'aprobado' | 'rechazado') =>
   }, 400)
 }
 
-const openEditModal = async (row: any, idx: number) => {
+const openEditModal = async (row: any) => {
   const newVal = prompt('Modificar valor del metadato antes de aprobar:', row.valor)
   if (newVal !== null) {
     row.valor = newVal
+    const recordKey = String(row.id || row.uuid || '')
 
     // Inmunidad inmediata ante refresco
     try {
@@ -717,7 +751,7 @@ const openEditModal = async (row: any, idx: number) => {
         console.warn('Error editando propuesta en backend:', err)
       }
     }
-    decisions.value[idx] = 'editado'
+    decisions.value[recordKey] = 'editado'
     countEditados.value++
     countPendientes.value = Math.max(0, countPendientes.value - 1)
 
@@ -725,7 +759,7 @@ const openEditModal = async (row: any, idx: number) => {
       const currentIdx = pendingList.value.findIndex(p => p.id === row.id)
       if (currentIdx !== -1) {
         const [edited] = pendingList.value.splice(currentIdx, 1)
-        delete decisions.value[idx]
+        delete decisions.value[recordKey]
         history.value.unshift({
           registro: edited.registro,
           campo: edited.campo,
