@@ -332,6 +332,20 @@ class EnrichmentService:
         """
         
         # 1. Extraer publicaciones que tengan título y resumen original válido
+        tiene_clasificacion = and_(
+            DSpaceEnrichmentQueue.area_ocde.isnot(None),
+            DSpaceEnrichmentQueue.area_ods.isnot(None)
+        )
+        order_criteria = (
+            [DSpaceEnrichmentQueue.id.asc()]
+            if force_reclassify
+            else [
+                case((tiene_clasificacion, 0), else_=1),
+                case((tiene_clasificacion, DSpaceEnrichmentQueue.updated_at), else_=None).desc().nullslast(),
+                DSpaceEnrichmentQueue.id.asc(),
+            ]
+        )
+
         candidatos = (
             db.query(DSpaceEnrichmentQueue)
             .filter(
@@ -341,15 +355,8 @@ class EnrichmentService:
                 func.length(DSpaceEnrichmentQueue.resumen_original) > 20,
                 ~DSpaceEnrichmentQueue.resumen_original.in_(["No disponible", "Sin resumen", "[No abstract available]"])
             )
-            # Si forzamos reclasificación, ordenamos por ID; si no, priorizamos las ya clasificadas
-            .order_by(
-                DSpaceEnrichmentQueue.id.asc() if force_reclassify else
-                case(
-                    (and_(DSpaceEnrichmentQueue.area_ocde.isnot(None), DSpaceEnrichmentQueue.area_ods.isnot(None)), 0),
-                    else_=1
-                ),
-                DSpaceEnrichmentQueue.id.asc()
-            )
+            # Si forzamos reclasificación, ordenamos por ID; si no, priorizamos las clasificadas más recientes
+            .order_by(*order_criteria)
             .limit(sample_size)
             .all()
         )
@@ -569,18 +576,37 @@ class EnrichmentService:
         for col_idx, width in col_widths.items():
             ws.column_dimensions[get_column_letter(col_idx)].width = width
 
-        # Guardar archivo en la raíz del proyecto
+        # Verificar si ya existe una planilla idéntica en la ruta destino; si existe, eliminarla antes de recrearla
         file_path = os.path.abspath(output_filename)
+        archivo_previo_eliminado = False
+        if os.path.exists(file_path):
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+                archivo_previo_eliminado = True
+            else:
+                raise IsADirectoryError(
+                    f"La ruta destino '{file_path}' corresponde a un directorio y no a un archivo."
+                )
+
+        parent_dir = os.path.dirname(file_path)
+        if parent_dir:
+            os.makedirs(parent_dir, exist_ok=True)
+
         wb.save(file_path)
 
         return {
             "status": "success",
             "archivo_generado": output_filename,
             "ruta_absoluta": file_path,
+            "archivo_previo_eliminado": archivo_previo_eliminado,
             "total_muestra": len(candidatos),
             "clasificados_nuevos": clasificados_nuevos,
             "ya_clasificados_reutilizados": ya_clasificados,
-            "mensaje": f"Muestra de {len(candidatos)} publicaciones generada y guardada exitosamente en {output_filename}"
+            "mensaje": (
+                f"Planilla previa eliminada y muestra de {len(candidatos)} publicaciones regenerada exitosamente en {output_filename}"
+                if archivo_previo_eliminado
+                else f"Muestra de {len(candidatos)} publicaciones generada y guardada exitosamente en {output_filename}"
+            )
         }
 
     def reset_classifications(
