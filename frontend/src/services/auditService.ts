@@ -5,6 +5,7 @@ export interface RealAuditLog {
   id: string
   user_id?: string
   user_name?: string
+  user_email?: string
   role?: string
   item_id: string
   action: string

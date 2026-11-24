@@ -41,7 +41,7 @@ def record_audit(payload: AuditLogCreateRequest, db: Session = Depends(get_db)):
 
 @router.get("/")
 def list_all_audit_logs(
-    limit: int = 100,
+    limit: int = 1000,
     db: Session = Depends(get_db)
 ):
     """Retorna los registros globales de auditoría inmutable (INSERT-only)."""
@@ -55,6 +55,7 @@ def list_all_audit_logs(
             "id": str(e.id),
             "user_id": str(e.id_user) if e.id_user else "",
             "user_name": f"{e.user.name} {e.user.last_name}".strip() if e.user else "Usuario Institucional",
+            "user_email": e.user.email if e.user else "",
             "role": e.user.role.name if (e.user and e.user.role) else "Curador",
             "item_id": str(e.id_item_enrichment) if e.id_item_enrichment else "",
             "action": e.action,

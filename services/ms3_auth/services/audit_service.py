@@ -50,13 +50,15 @@ class MS3AuditWorker:
             act_clean = "Inicio de sesión"
         elif act_lower in ["logout", "cierre_sesion", "cierre sesion", "cierre de sesion"]:
             act_clean = "Cierre de sesión"
-        elif act_lower in ["aprobar", "aprobado", "approved"]:
+        elif act_lower in ["monitoreo", "monitoreo de registros", "monitorear", "escanear", "scan", "monitoreo_registros"]:
+            act_clean = "Monitoreo de registros"
+        elif act_lower in ["aprobar", "aprobado", "approved", "aprobacion"]:
             act_clean = "Aprobar"
-        elif act_lower in ["rechazar", "rechazado", "rejected"]:
+        elif act_lower in ["rechazar", "rechazado", "rejected", "rechazo"]:
             act_clean = "Rechazar"
-        elif act_lower in ["editar", "editado", "edit"]:
+        elif act_lower in ["editar", "editado", "edit", "edicion"]:
             act_clean = "Editar"
-        elif act_lower in ["validar", "validado", "validated"]:
+        elif act_lower in ["validar", "validado", "validated", "validacion"]:
             act_clean = "Validar"
         elif act_lower in ["crear usuario", "create_user", "nuevo usuario"]:
             act_clean = "Crear Usuario"

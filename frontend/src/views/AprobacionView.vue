@@ -685,7 +685,15 @@ const applyDecision = async (row: any, decision: 'aprobado' | 'rechazado') => {
             user_id: storedUser.id,
             item_id: row.uuid || String(row.id),
             action: decision === 'aprobado' ? 'Aprobar' : 'Rechazar',
-            new_value: { valor: row.valor, campo: row.campo }
+            new_value: {
+              titulo: row.title,
+              doi: row.doi,
+              campo: row.campo,
+              valor: row.valor,
+              uuid: row.uuid,
+              decision: decision,
+              resumen: `${decision === 'aprobado' ? 'Aprobación' : 'Rechazo'} curatorial de metadato (${row.campo}) para la publicación '${row.title}'.`
+            }
           })
         }
       } catch {}
@@ -743,7 +751,15 @@ const openEditModal = async (row: any) => {
               user_id: storedUser.id,
               item_id: row.uuid || String(row.id),
               action: 'Editar',
-              new_value: { valor: newVal, campo: row.campo }
+              new_value: {
+                titulo: row.title,
+                doi: row.doi,
+                campo: row.campo,
+                valor_anterior: row.valor,
+                valor_nuevo: newVal,
+                uuid: row.uuid,
+                resumen: `Edición curatorial de metadato (${row.campo}) antes de aprobación para la publicación '${row.title}'.`
+              }
             })
           }
         } catch {}
