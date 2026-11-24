@@ -268,6 +268,7 @@ import SectionHeader from '../components/common/SectionHeader.vue'
 import Pagination from '../components/common/Pagination.vue'
 import { proposalService } from '../services/proposalService'
 import { auditService } from '../services/auditService'
+import { authService } from '../services/authService'
 import type { User } from '../types'
 
 const props = defineProps<{
@@ -356,14 +357,18 @@ const validateItem = async (item: any) => {
     item.estado = 'Validado / Aprobado'
 
     try {
+      const storedUser = authService.getStoredUser()
       await auditService.recordAction({
+        user_id: storedUser?.id,
         action: 'Validar',
-        item_id: String(targetId),
+        item_id: String(item.uuid || targetId),
         new_value: {
           titulo: item.title,
           campo: item.campo,
           confianza: item.confianza,
-          doi: item.doi
+          doi: item.doi,
+          uuid: item.uuid || targetId,
+          resumen: `Validación curatorial aprobada para '${item.title}' (campo: ${item.campo}).`
         }
       })
     } catch {}

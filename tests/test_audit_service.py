@@ -1,8 +1,10 @@
 import os
 import sys
 import unittest
+from unittest import mock
 import uuid
 from datetime import datetime
+import httpx
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -106,7 +108,9 @@ class TestAuditSystem(unittest.TestCase):
         self.assertIn("Aprobar", actions)
         self.assertIn("Validar", actions)
 
-    def test_ms3_client_resilience(self):
+    @mock.patch("httpx.Client.post", side_effect=httpx.ConnectError("Connection refused"))
+    @mock.patch("httpx.Client.get", side_effect=httpx.ConnectError("Connection refused"))
+    def test_ms3_client_resilience(self, mock_get, mock_post):
         """Verifica que MS3Client maneje timeouts o fallos de conexión sin arrojar excepciones no controladas."""
         from services.ms4_orchestrator.clients.ms_clients import MS3Client
         client = MS3Client()

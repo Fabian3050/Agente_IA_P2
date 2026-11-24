@@ -520,6 +520,8 @@ import Card from '../components/common/Card.vue'
 import Badge from '../components/common/Badge.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import { proposalService } from '../services/proposalService'
+import { auditService } from '../services/auditService'
+import { authService } from '../services/authService'
 import type { MonitoreoRecord } from '../types'
 
 const search = ref('')
@@ -911,6 +913,18 @@ const runAgentOnAll = async () => {
     }))
     if (itemsToDetect.length > 0) {
       await proposalService.detectMissing(itemsToDetect)
+      try {
+        const storedUser = authService.getStoredUser()
+        await auditService.recordAction({
+          user_id: storedUser?.id,
+          action: 'Enriquecimiento en lote',
+          new_value: {
+            total_procesados: itemsToDetect.length,
+            ids: itemsToDetect.map(i => i.item_id),
+            resumen: `Procesamiento de enriquecimiento en lote ejecutado para ${itemsToDetect.length} publicaciones pendientes.`
+          }
+        })
+      } catch {}
       alert(`Se procesaron exitosamente ${itemsToDetect.length} registros con el agente de enriquecimiento IA.`)
       await loadRealQueue()
     } else {
@@ -932,6 +946,21 @@ const runAgentSingle = async (record: MonitoreoRecord | null) => {
   enrichingIds.value[record.id] = true
   try {
     await proposalService.enrichQueueItem(record.id || record.uuid || '')
+    try {
+      const storedUser = authService.getStoredUser()
+      await auditService.recordAction({
+        user_id: storedUser?.id,
+        item_id: record.uuid || String(record.id),
+        action: 'Enriquecimiento IA',
+        new_value: {
+          titulo: record.title,
+          doi: record.doi,
+          campo: record.campo,
+          uuid: record.uuid,
+          resumen: `Enriquecimiento individual ejecutado sobre publicación #${record.id} (${record.title}).`
+        }
+      })
+    } catch {}
     record.estado = 'Completado'
     completadosCount.value++
     pendientesCount.value = Math.max(0, pendientesCount.value - 1)
@@ -971,6 +1000,25 @@ const scanAndPopulateMissing = async () => {
         mensaje += `• Nuevos elementos guardados en la cola de enriquecimiento: ${nuevos}\n`
         mensaje += `• Elementos que ya existían en la cola: ${existentes}`
       }
+
+      // Registrar trazabilidad inmutable del monitoreo en MS3
+      try {
+        const storedUser = authService.getStoredUser()
+        await auditService.recordAction({
+          user_id: storedUser?.id,
+          action: 'Monitoreo de registros',
+          new_value: {
+            total_revisados: res.total_revisados,
+            total_candidatos: totalCandidatos,
+            nuevos_en_cola: nuevos,
+            ya_existentes: existentes,
+            resumen: `Monitoreo institucional de DSpace-CRIS ejecutado por ${storedUser?.fullName || 'Curador VRIIC'}: ${res.total_revisados?.toLocaleString('es-CL') || '0'} registros evaluados, ${totalCandidatos} con metadatos faltantes detectados (${nuevos} ingresados a la cola de enriquecimiento).`
+          }
+        })
+      } catch (auditErr) {
+        console.warn('Error registrando auditoría de monitoreo en MS3:', auditErr)
+      }
+
       alert(mensaje)
 
       // Actualizar automáticamente la tabla y contadores de la vista
