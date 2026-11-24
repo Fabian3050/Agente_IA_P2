@@ -263,6 +263,7 @@ import { Search, UserPlus, Users, UserCheck, UserX, Key, X } from 'lucide-vue-ne
 import Card from '../components/common/Card.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import { authService } from '../services/authService'
+import { auditService } from '../services/auditService'
 
 interface UserItem {
   id: string
@@ -350,6 +351,14 @@ const toggleRevoke = async (u: UserItem) => {
     u.isActive = targetState
     u.status = targetState ? 'Activo' : 'Revocado'
     u.lastActive = targetState ? 'Reactivado hoy' : 'Acceso revocado por admin'
+
+    try {
+      await auditService.recordAction({
+        action: 'Modificar Estado Usuario',
+        user_id: u.rawId,
+        new_value: { email: u.email, is_active: targetState, status: u.status }
+      })
+    } catch {}
   } catch (err) {
     alert(`Error al actualizar estado del usuario: ${err}`)
   }
@@ -357,13 +366,30 @@ const toggleRevoke = async (u: UserItem) => {
 
 const handleCreateUser = async () => {
   if (!newUserName.value || !newUserEmail.value) return
+  const cleanEmail = newUserEmail.value.trim().toLowerCase()
+  if (!cleanEmail.endsWith('@usach.cl')) {
+    alert('Acceso restringido: El correo debe pertenecer al dominio institucional (@usach.cl).')
+    return
+  }
   try {
     await authService.createUser({
       name: newUserName.value,
       last_name: newUserLastName.value || 'USACH',
-      email: newUserEmail.value,
+      email: cleanEmail,
       role_name: newUserRole.value,
     })
+
+    try {
+      await auditService.recordAction({
+        action: 'Crear Usuario',
+        new_value: {
+          name: newUserName.value,
+          email: newUserEmail.value,
+          role: newUserRole.value
+        }
+      })
+    } catch {}
+
     isCreateModalOpen.value = false
     newUserName.value = ''
     newUserLastName.value = ''

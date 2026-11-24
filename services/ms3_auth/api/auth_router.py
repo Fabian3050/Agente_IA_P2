@@ -340,8 +340,8 @@ def sso_login_page(
         <input type="hidden" name="state" value="{state or ''}">
 
         <div class="form-group">
-          <label class="form-label">Correo Electrónico Institucional</label>
-          <input type="email" id="email" name="email" class="form-input" value="curador.vriic@usach.cl" required>
+          <label class="form-label">Correo Electrónico Institucional (@usach.cl)</label>
+          <input type="email" id="email" name="email" class="form-input" value="curador.vriic@usach.cl" pattern="^[a-zA-Z0-9._%+-]+@usach\\.cl$" title="Debe ser una cuenta institucional con dominio @usach.cl" required>
         </div>
 
         <div class="form-row">
@@ -420,9 +420,16 @@ def sso_authorize(
     Emite un código de autorización temporal, registra la identidad autorizada en memoria
     y ejecuta la redirección HTTP 303 hacia el redirect_uri configurado por el frontend con ?code=...&state=...
     """
+    clean_email = email.strip().lower()
+    if not clean_email.endswith("@usach.cl"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Acceso denegado: El correo '{clean_email}' no pertenece al dominio institucional (@usach.cl)."
+        )
+
     auth_code = f"usach_code_{uuid.uuid4().hex}"
     oidc_service.register_auth_code(auth_code, {
-        "email": email,
+        "email": clean_email,
         "name": name,
         "last_name": last_name,
         "role": role,
@@ -464,6 +471,21 @@ async def auth_callback(
         user = oidc_service.provision_user_from_claims(db, claims)
         jwt_token, expires_in = oidc_service.create_session_jwt(user)
 
+        try:
+            audit_worker.record_action(
+                db=db,
+                user_id=user.id,
+                item_id=None,
+                action="Inicio de sesión",
+                new_value={
+                    "email": user.email,
+                    "role": user.role.name if user.role else "Academico",
+                    "method": "OIDC Institutional Callback"
+                }
+            )
+        except Exception as e_aud:
+            print(f"[AuthRouter] Advertencia registrando auditoría OIDC callback: {e_aud}")
+
         user_dto = UserDTO(
             id=user.id,
             name=user.name,
@@ -503,6 +525,21 @@ def exchange_oidc_id_token(
         claims = oidc_service.parse_id_token_unverified(payload.id_token)
         user = oidc_service.provision_user_from_claims(db, claims)
         jwt_token, expires_in = oidc_service.create_session_jwt(user)
+
+        try:
+            audit_worker.record_action(
+                db=db,
+                user_id=user.id,
+                item_id=None,
+                action="Inicio de sesión",
+                new_value={
+                    "email": user.email,
+                    "role": user.role.name if user.role else "Academico",
+                    "method": "OIDC Institutional Callback"
+                }
+            )
+        except Exception as e_aud:
+            print(f"[AuthRouter] Advertencia registrando auditoría OIDC callback: {e_aud}")
 
         user_dto = UserDTO(
             id=user.id,
@@ -553,6 +590,22 @@ def mock_login(
 
     user = oidc_service.provision_user_from_claims(db, simulated_claims)
     jwt_token, expires_in = oidc_service.create_session_jwt(user)
+
+    # Registro inmutable de auditoría para inicio de sesión
+    try:
+        audit_worker.record_action(
+            db=db,
+            user_id=user.id,
+            item_id=None,
+            action="Inicio de sesión",
+            new_value={
+                "email": user.email,
+                "role": user.role.name if user.role else "Academico",
+                "method": "SSO USACH (Sandbox)"
+            }
+        )
+    except Exception as e_aud:
+        print(f"[AuthRouter] Advertencia registrando auditoría de mock login: {e_aud}")
 
     user_dto = UserDTO(
         id=user.id,
@@ -645,6 +698,12 @@ def create_user(
     Registra manualmente un usuario en el sistema con su rol respectivo.
     """
     clean_email = payload.email.strip().lower()
+    if not clean_email.endswith("@usach.cl"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Acceso denegado: El correo '{clean_email}' debe pertenecer al dominio institucional (@usach.cl)."
+        )
+
     existing = db.query(User).filter(User.email == clean_email).first()
     if existing:
         raise HTTPException(
@@ -672,6 +731,23 @@ def create_user(
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+
+    # Registro inmutable de auditoría para creación de usuario
+    try:
+        audit_worker.record_action(
+            db=db,
+            user_id=new_user.id,
+            item_id=None,
+            action="Crear Usuario",
+            new_value={
+                "email": new_user.email,
+                "role": role_record.name,
+                "name": f"{new_user.name} {new_user.last_name}",
+                "orcid": new_user.orcid
+            }
+        )
+    except Exception as e_aud:
+        print(f"[AuthRouter] Advertencia registrando auditoría de creación de usuario: {e_aud}")
 
     return UserDTO(
         id=new_user.id,
@@ -721,6 +797,22 @@ def toggle_user_status(
     user.is_active = is_active
     db.commit()
     db.refresh(user)
+
+    try:
+        audit_worker.record_action(
+            db=db,
+            user_id=user.id,
+            item_id=None,
+            action="Modificar Estado Usuario",
+            new_value={
+                "email": user.email,
+                "is_active": user.is_active,
+                "status": "Activo" if user.is_active else "Revocado"
+            }
+        )
+    except Exception as e_aud:
+        print(f"[AuthRouter] Advertencia registrando auditoría de cambio de estado: {e_aud}")
+
     return {
         "id": str(user.id),
         "email": user.email,

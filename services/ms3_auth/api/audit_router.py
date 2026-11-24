@@ -53,32 +53,32 @@ def list_all_audit_logs(
     return [
         {
             "id": str(e.id),
-            "user_id": str(e.id_user),
-            "user_name": f"{e.user.name} {e.user.last_name}".strip() if e.user else "Curador VRIIC",
+            "user_id": str(e.id_user) if e.id_user else "",
+            "user_name": f"{e.user.name} {e.user.last_name}".strip() if e.user else "Usuario Institucional",
             "role": e.user.role.name if (e.user and e.user.role) else "Curador",
-            "item_id": str(e.id_item_enrichment),
+            "item_id": str(e.id_item_enrichment) if e.id_item_enrichment else "",
             "action": e.action,
             "previous_value": e.previous_value,
             "new_value": e.new_value,
             "rejection_reason": e.rejection_reason,
-            "timestamp": e.timestamp.isoformat()
+            "timestamp": e.timestamp.isoformat() if e.timestamp else ""
         }
         for e in entries
     ]
 
 @router.get("/{item_id}")
-def get_audit_trail(item_id: uuid.UUID, db: Session = Depends(get_db)):
+def get_audit_trail(item_id: str, db: Session = Depends(get_db)):
     """Recupera la trazabilidad inmutable de un ítem para auditoría institucional."""
     entries = audit_worker.get_logs_for_item(db, item_id)
     return [
         {
             "id": str(e.id),
-            "user_id": str(e.id_user),
+            "user_id": str(e.id_user) if e.id_user else "",
             "action": e.action,
             "previous_value": e.previous_value,
             "new_value": e.new_value,
             "rejection_reason": e.rejection_reason,
-            "timestamp": e.timestamp.isoformat()
+            "timestamp": e.timestamp.isoformat() if e.timestamp else ""
         }
         for e in entries
     ]

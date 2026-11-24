@@ -328,36 +328,35 @@ class EnrichmentService:
             necesita_clasificar_ods = force_reclassify or not item.area_ods
 
             if necesita_clasificar_ocde or necesita_clasificar_ods:
-                articulo_sintetico = MetadataResponse(
-                    title=item.titulo or "Sin título",
-                    authors=[],
-                    doi=item.doi,
-                    abstract=item.resumen_original,
-                    keywords=item.palabras_clave or None,
-                    source="internal"
-                )
+                abstract_para_llm = item.abstract_enriquecido or item.resumen_original
+                keywords_str = ", ".join(item.palabras_clave) if isinstance(item.palabras_clave, list) else (str(item.palabras_clave) if item.palabras_clave else None)
 
-                if necesita_clasificar_ocde:
+                item_uuid = uuid.uuid4()
+                if item.dspace_uuid:
                     try:
-                        res_ocde = await self.classification_service.classify_metadata_ocde(articulo_sintetico)
-                        if res_ocde and res_ocde.clasificaciones:
-                            item.area_ocde = [
-                                c.model_dump() if hasattr(c, "model_dump") else c.dict()
-                                for c in res_ocde.clasificaciones
-                            ]
-                    except Exception as e_ocde:
-                        print(f"Error clasificando OCDE en muestra para {item.dspace_uuid}: {e_ocde}")
+                        item_uuid = uuid.UUID(str(item.dspace_uuid))
+                    except (ValueError, TypeError):
+                        pass
 
-                if necesita_clasificar_ods:
-                    try:
-                        res_ods = await self.classification_service.classify_metadata_ods(articulo_sintetico)
-                        if res_ods and res_ods.clasificaciones:
-                            item.area_ods = [
-                                c.model_dump() if hasattr(c, "model_dump") else c.dict()
-                                for c in res_ods.clasificaciones
-                            ]
-                    except Exception as e_ods:
-                        print(f"Error clasificando ODS en muestra para {item.dspace_uuid}: {e_ods}")
+                try:
+                    res_ms2 = await self.ms2_client.classify(
+                        item_id=item_uuid,
+                        title=item.titulo,
+                        abstract=abstract_para_llm,
+                        keywords=keywords_str
+                    )
+                    if necesita_clasificar_ocde:
+                        if res_ms2.get("ocde_categories"):
+                            item.area_ocde = res_ms2["ocde_categories"]
+                        elif res_ms2.get("area_ocde"):
+                            item.area_ocde = res_ms2["area_ocde"] if isinstance(res_ms2["area_ocde"], list) else [res_ms2["area_ocde"]]
+                    if necesita_clasificar_ods:
+                        if res_ms2.get("ods_categories"):
+                            item.area_ods = res_ms2["ods_categories"]
+                        elif res_ms2.get("area_ods"):
+                            item.area_ods = res_ms2["area_ods"] if isinstance(res_ms2["area_ods"], list) else [res_ms2["area_ods"]]
+                except Exception as e_ms2:
+                    print(f"Error clasificando en MS2 para {item.dspace_uuid or item.id}: {e_ms2}")
 
                 if item.area_ocde and item.area_ods:
                     item.estado = "COMPLETO"
@@ -368,7 +367,7 @@ class EnrichmentService:
                 db.commit()
                 db.refresh(item)
                 clasificados_nuevos += 1
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0.1)
             else:
                 ya_clasificados += 1
 
@@ -452,39 +451,97 @@ class EnrichmentService:
 
         # Llenar datos de cada publicación
         for idx, item in enumerate(candidatos, 1):
-            # Parsear OCDE
-            cod_ocde_str = ""
-            nom_ocde_str = ""
-            just_ocde_str = ""
-            if item.area_ocde and isinstance(item.area_ocde, list):
-                cods, noms, justs = [], [], []
-                for c in item.area_ocde:
-                    cod = c.get("codigo_disciplina") or c.get("codigo_area") or ""
-                    nom = c.get("nombre_disciplina") or c.get("nombre_area") or ""
-                    just = c.get("justificacion") or ""
-                    if cod: cods.append(str(cod))
-                    if nom: noms.append(str(nom))
-                    if just: justs.append(str(just))
-                cod_ocde_str = "\n".join(cods)
-                nom_ocde_str = "\n".join(noms)
-                just_ocde_str = "\n---\n".join(justs)
+            # Parsear OCDE de manera defensiva (soporta lista de dicts, lista de strings, dict único o string)
+            cods, noms, justs = [], [], []
+            raw_ocde = item.area_ocde
+            if isinstance(raw_ocde, str):
+                try:
+                    import json
+                    parsed = json.loads(raw_ocde)
+                    if isinstance(parsed, (list, dict)):
+                        raw_ocde = parsed
+                except Exception:
+                    pass
+            if isinstance(raw_ocde, dict):
+                raw_ocde = [raw_ocde]
+            elif raw_ocde and not isinstance(raw_ocde, list):
+                raw_ocde = [str(raw_ocde)]
 
-            # Parsear ODS
-            num_ods_str = ""
-            nom_ods_str = ""
-            just_ods_str = ""
-            if item.area_ods and isinstance(item.area_ods, list):
-                nums, noms, justs = [], [], []
-                for o in item.area_ods:
-                    num = o.get("numero_ods") or ""
-                    nom = o.get("nombre_ods") or ""
-                    just = o.get("justificacion") or ""
-                    if num: nums.append(f"ODS {num}")
-                    if nom: noms.append(str(nom))
-                    if just: justs.append(str(just))
-                num_ods_str = "\n".join(nums)
-                nom_ods_str = "\n".join(noms)
-                just_ods_str = "\n---\n".join(justs)
+            if raw_ocde and isinstance(raw_ocde, list):
+                for c in raw_ocde:
+                    if isinstance(c, dict):
+                        cod = str(c.get("codigo_disciplina") or c.get("codigo_area") or "").strip()
+                        nom = str(c.get("nombre_disciplina") or c.get("nombre_area") or "").strip()
+                        just = str(c.get("justificacion") or "").strip()
+                    elif isinstance(c, str):
+                        c_str = c.strip()
+                        if " - " in c_str:
+                            parts = c_str.split(" - ", 1)
+                            cod = parts[0].strip()
+                            nom = parts[1].strip()
+                        else:
+                            cod = ""
+                            nom = c_str
+                        just = ""
+                    else:
+                        cod, nom, just = "", str(c), ""
+
+                    if cod: cods.append(cod)
+                    if nom: noms.append(nom)
+                    if just: justs.append(just)
+
+            cod_ocde_str = "\n".join(cods)
+            nom_ocde_str = "\n".join(noms)
+            just_ocde_str = "\n---\n".join([j for j in justs if j])
+
+            # Parsear ODS de manera defensiva (soporta lista de dicts, lista de strings, dict único o string)
+            nums, noms_ods, justs_ods = [], [], []
+            raw_ods = item.area_ods
+            if isinstance(raw_ods, str):
+                try:
+                    import json
+                    parsed = json.loads(raw_ods)
+                    if isinstance(parsed, (list, dict)):
+                        raw_ods = parsed
+                except Exception:
+                    pass
+            if isinstance(raw_ods, dict):
+                raw_ods = [raw_ods]
+            elif raw_ods and not isinstance(raw_ods, list):
+                raw_ods = [str(raw_ods)]
+
+            if raw_ods and isinstance(raw_ods, list):
+                for o in raw_ods:
+                    if isinstance(o, dict):
+                        num = str(o.get("numero_ods") or "").strip()
+                        nom = str(o.get("nombre_ods") or "").strip()
+                        just = str(o.get("justificacion") or "").strip()
+                        if num and not num.upper().startswith("ODS"):
+                            num = f"ODS {num}"
+                    elif isinstance(o, str):
+                        o_str = o.strip()
+                        if ":" in o_str:
+                            parts = o_str.split(":", 1)
+                            num = parts[0].strip()
+                            nom = parts[1].strip()
+                        elif " - " in o_str:
+                            parts = o_str.split(" - ", 1)
+                            num = parts[0].strip()
+                            nom = parts[1].strip()
+                        else:
+                            num = ""
+                            nom = o_str
+                        just = ""
+                    else:
+                        num, nom, just = "", str(o), ""
+
+                    if num: nums.append(num)
+                    if nom: noms_ods.append(nom)
+                    if just: justs_ods.append(just)
+
+            num_ods_str = "\n".join(nums)
+            nom_ods_str = "\n".join(noms_ods)
+            just_ods_str = "\n---\n".join([j for j in justs_ods if j])
 
             row_data = [
                 idx,

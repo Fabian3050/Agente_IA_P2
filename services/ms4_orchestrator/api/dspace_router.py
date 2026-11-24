@@ -261,7 +261,7 @@ def get_dashboard_stats(
 ):
     """
     Retorna métricas consolidadas ultrarrápidas para el Dashboard consultando
-    directamente las tablas de la base de datos (dspace_enrichment_queue, candidate_match, audit_log).
+    las tablas de MS4 y consultando la actividad reciente de auditoría a través de MS3.
     """
     import traceback
     from sqlalchemy import func, or_, and_, text
@@ -425,22 +425,17 @@ def get_dashboard_stats(
 
         bar_data = [{"day": d, "value": conteos_por_dia[d]} for d in dias_nombres]
 
-        # 9. Actividad reciente de auditoría (AuditLog)
+        # 9. Actividad reciente de auditoría obtenida desde MS3 (dueño de User, Role y AuditLog)
         recent_activity = []
         try:
-            log_rows = db.execute(text(
-                "SELECT action, user_name, role, item_id, timestamp FROM audit_log ORDER BY timestamp DESC LIMIT 10"
-            )).fetchall()
-            for lr in log_rows:
-                recent_activity.append({
-                    "action": lr[0] or "Acción",
-                    "user_name": lr[1] or "Curador",
-                    "role": lr[2] or "Curador",
-                    "item_id": str(lr[3]) if lr[3] else "",
-                    "timestamp": lr[4].isoformat() if hasattr(lr[4], "isoformat") else str(lr[4])
-                })
+            try:
+                from clients.ms_clients import MS3Client
+            except ImportError:
+                from services.ms4_orchestrator.clients.ms_clients import MS3Client
+            ms3_client = MS3Client()
+            recent_activity = ms3_client.get_recent_activity_sync(limit=10)
         except Exception as e_log:
-            print(f"[DashboardStats] Advertencia consultando audit_log: {e_log}")
+            print(f"[DashboardStats] Advertencia consultando actividad reciente de auditoría en MS3: {e_log}")
 
         return {
             "total_monitoreados": total_monitoreados,
@@ -600,6 +595,22 @@ def validate_record(
     item.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(item)
+
+    # Registro de auditoría vía MS3 (Microservicio propietario de AuditLog)
+    try:
+        try:
+            from clients.ms_clients import MS3Client
+        except ImportError:
+            from services.ms4_orchestrator.clients.ms_clients import MS3Client
+        ms3_client = MS3Client()
+        ms3_client.record_audit_sync(
+            item_id=str(item.id),
+            action="Validar",
+            new_value={"titulo": item.titulo, "estado": "ENRIQUECIDO", "doi": item.doi}
+        )
+    except Exception as e_aud:
+        print(f"[DSpaceRouter MS4] Advertencia registrando auditoría de validación en MS3: {e_aud}")
+
     return {
         "status": "VALIDATED",
         "id": item.id,
@@ -609,43 +620,112 @@ def validate_record(
 
 @router.post("/enrichment-queue/{item_id}/approve")
 def approve_queue_item(
-    item_id: int,
+    item_id: str,
     db: Session = Depends(get_db)
 ):
     """
     Aprueba una publicación enriquecida en la cola, marcándola como SINCRONIZADO_DSPACE.
+    Soporta búsqueda por ID numérico de cola o por UUID de DSpace.
     """
     from models import DSpaceEnrichmentQueue
-    item = db.query(DSpaceEnrichmentQueue).filter(DSpaceEnrichmentQueue.id == item_id).first()
+    item = None
+    if str(item_id).isdigit():
+        item = db.query(DSpaceEnrichmentQueue).filter(DSpaceEnrichmentQueue.id == int(item_id)).first()
     if not item:
+        item = db.query(DSpaceEnrichmentQueue).filter(DSpaceEnrichmentQueue.dspace_uuid == str(item_id)).first()
+    
+    if not item:
+        # Intento de aprobación en modelo formal ItemEnrichment si proviene de propuestas v3
+        try:
+            from models import ItemEnrichment, Status, ProposalStatus
+            ie = db.query(ItemEnrichment).filter((ItemEnrichment.id == item_id) | (ItemEnrichment.uuid_dspace == str(item_id))).first()
+            if ie:
+                st = db.query(Status).filter(Status.name == ProposalStatus.APROBADA).first()
+                if st:
+                    ie.id_status = st.id
+                    db.commit()
+                return {"status": "APPROVED", "id": str(ie.id), "estado": "APROBADA"}
+        except Exception:
+            pass
         raise HTTPException(status_code=404, detail=f"No se encontró el registro #{item_id}")
+
     item.estado = "SINCRONIZADO_DSPACE"
     item.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(item)
+
+    # Actualizar también ItemEnrichment formal si existe correlación por UUID
+    try:
+        from models import ItemEnrichment, Status, ProposalStatus
+        ie = db.query(ItemEnrichment).filter(ItemEnrichment.uuid_dspace == item.dspace_uuid).first()
+        if ie:
+            st = db.query(Status).filter(Status.name == ProposalStatus.APROBADA).first()
+            if st:
+                ie.id_status = st.id
+                db.commit()
+    except Exception:
+        pass
+
+    # Registro de auditoría vía MS3 (Microservicio propietario de AuditLog)
+    try:
+        try:
+            from clients.ms_clients import MS3Client
+        except ImportError:
+            from services.ms4_orchestrator.clients.ms_clients import MS3Client
+        ms3_client = MS3Client()
+        ms3_client.record_audit_sync(
+            item_id=str(item.dspace_uuid or item.id),
+            action="Aprobar",
+            new_value={"titulo": item.titulo, "estado": "SINCRONIZADO_DSPACE", "doi": item.doi}
+        )
+    except Exception as e_aud:
+        print(f"[DSpaceRouter MS4] Advertencia registrando auditoría de aprobación en MS3: {e_aud}")
+
     return {"status": "APPROVED", "id": item.id, "estado": item.estado}
 
 @router.post("/enrichment-queue/{item_id}/reject")
 def reject_queue_item(
-    item_id: int,
+    item_id: str,
+    payload: Optional[dict] = None,
     db: Session = Depends(get_db)
 ):
     """
     Rechaza una publicación enriquecida, reiniciándola a PENDIENTE para re-procesamiento.
     """
     from models import DSpaceEnrichmentQueue
-    item = db.query(DSpaceEnrichmentQueue).filter(DSpaceEnrichmentQueue.id == item_id).first()
+    item = None
+    if str(item_id).isdigit():
+        item = db.query(DSpaceEnrichmentQueue).filter(DSpaceEnrichmentQueue.id == int(item_id)).first()
+    if not item:
+        item = db.query(DSpaceEnrichmentQueue).filter(DSpaceEnrichmentQueue.dspace_uuid == str(item_id)).first()
     if not item:
         raise HTTPException(status_code=404, detail=f"No se encontró el registro #{item_id}")
     item.estado = "PENDIENTE"
     item.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(item)
+
+    # Registro de auditoría vía MS3 (Microservicio propietario de AuditLog)
+    try:
+        try:
+            from clients.ms_clients import MS3Client
+        except ImportError:
+            from services.ms4_orchestrator.clients.ms_clients import MS3Client
+        ms3_client = MS3Client()
+        ms3_client.record_audit_sync(
+            item_id=str(item.dspace_uuid or item.id),
+            action="Rechazar",
+            new_value={"titulo": item.titulo, "estado": "PENDIENTE", "doi": item.doi},
+            rejection_reason="Rechazado en sección de aprobación para re-procesamiento"
+        )
+    except Exception as e_aud:
+        print(f"[DSpaceRouter MS4] Advertencia registrando auditoría de rechazo en MS3: {e_aud}")
+
     return {"status": "REJECTED", "id": item.id, "estado": item.estado}
 
 @router.patch("/enrichment-queue/{item_id}")
 def edit_queue_item(
-    item_id: int,
+    item_id: str,
     payload: dict,
     db: Session = Depends(get_db)
 ):
@@ -653,7 +733,11 @@ def edit_queue_item(
     Edita metadatos de un ítem enriquecido antes de aprobarlo.
     """
     from models import DSpaceEnrichmentQueue
-    item = db.query(DSpaceEnrichmentQueue).filter(DSpaceEnrichmentQueue.id == item_id).first()
+    item = None
+    if str(item_id).isdigit():
+        item = db.query(DSpaceEnrichmentQueue).filter(DSpaceEnrichmentQueue.id == int(item_id)).first()
+    if not item:
+        item = db.query(DSpaceEnrichmentQueue).filter(DSpaceEnrichmentQueue.dspace_uuid == str(item_id)).first()
     if not item:
         raise HTTPException(status_code=404, detail=f"No se encontró el registro #{item_id}")
     if "valor" in payload and payload["valor"]:
@@ -662,6 +746,22 @@ def edit_queue_item(
     item.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(item)
+
+    # Registro de auditoría vía MS3 (Microservicio propietario de AuditLog)
+    try:
+        try:
+            from clients.ms_clients import MS3Client
+        except ImportError:
+            from services.ms4_orchestrator.clients.ms_clients import MS3Client
+        ms3_client = MS3Client()
+        ms3_client.record_audit_sync(
+            item_id=str(item.dspace_uuid or item.id),
+            action="Editar",
+            new_value={"valor": payload.get("valor"), "titulo": item.titulo, "estado": "SINCRONIZADO_DSPACE"}
+        )
+    except Exception as e_aud:
+        print(f"[DSpaceRouter MS4] Advertencia registrando auditoría de edición en MS3: {e_aud}")
+
     return {"status": "EDITED_AND_APPROVED", "id": item.id, "estado": item.estado}
 
 @router.post("/enrich/{item_id}")

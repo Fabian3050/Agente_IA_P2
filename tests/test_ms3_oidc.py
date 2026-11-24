@@ -238,6 +238,37 @@ class TestMS3OIDC(unittest.TestCase):
         self.assertIn("http://localhost:5173/?code=usach_code_", location)
         self.assertIn("state=xyz123", location)
 
+        # 3. Probar rechazo de correo no institucional en SSO
+        res_rejected = client.get(
+            "/auth/sso/authorize?redirect_uri=http://localhost:5173/&state=xyz123&email=externo@gmail.com&role=Curador_VRIIC",
+            follow_redirects=False
+        )
+        self.assertEqual(res_rejected.status_code, 400)
+        self.assertIn("@usach.cl", res_rejected.text)
+
+    def test_non_institutional_email_rejection(self):
+        """Verifica que el sistema rechace correos que no pertenezcan al dominio @usach.cl."""
+        # 1. Intento de provisión JIT con correo personal (ej. gmail)
+        invalid_claims = {
+            "sub": "google-oauth2-external-1234",
+            "email": "persona.externa@gmail.com",
+            "given_name": "Externo",
+            "family_name": "Google",
+            "role": "Curador_VRIIC"
+        }
+        with self.assertRaises(ValueError) as ctx:
+            self.oidc.provision_user_from_claims(self.db, invalid_claims)
+        self.assertIn("@usach.cl", str(ctx.exception))
+
+        # 2. Validación de modelo Pydantic para MockLoginRequest
+        from services.ms3_auth.models import MockLoginRequest, CreateUserRequest
+        with self.assertRaises(Exception):
+            MockLoginRequest(email="usuario@yahoo.es")
+
+        # 3. Validación de modelo Pydantic para CreateUserRequest
+        with self.assertRaises(Exception):
+            CreateUserRequest(name="Prueba", last_name="Externa", email="intruso@outlook.com")
+
 
 if __name__ == "__main__":
     unittest.main()

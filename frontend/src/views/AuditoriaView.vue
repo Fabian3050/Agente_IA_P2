@@ -100,8 +100,11 @@
               class="border-b border-gray-50 hover:bg-gray-50/50 transition-colors"
             >
               <td class="px-4 py-3.5 whitespace-nowrap">
-                <span class="text-xs font-mono font-bold text-[#1565C0] bg-blue-50/80 border border-blue-100 px-2.5 py-1 rounded-md">
-                  #{{ row.id }}
+                <span
+                  class="text-xs font-mono font-bold px-2.5 py-1 rounded-md"
+                  :class="row.isSystem ? 'text-purple-700 bg-purple-50/80 border border-purple-200' : 'text-[#1565C0] bg-blue-50/80 border border-blue-100'"
+                >
+                  {{ row.isSystem ? row.id : `#${row.id}` }}
                 </span>
               </td>
               <td class="px-4 py-3.5 max-w-[280px]">
@@ -148,8 +151,10 @@
               <ClipboardList :size="18" />
             </div>
             <div>
-              <h3 class="text-sm font-bold text-slate-800">Trazabilidad y Auditoría — Registro #{{ selectedAudit.id }}</h3>
-              <p class="text-[11px] text-slate-500">Historial completo e inmutable de eventos de enriquecimiento</p>
+              <h3 class="text-sm font-bold text-slate-800">
+                Trazabilidad y Auditoría — {{ selectedAudit.isSystem ? selectedAudit.nombre : `Registro #${selectedAudit.id}` }}
+              </h3>
+              <p class="text-[11px] text-slate-500">Historial completo e inmutable de eventos institucionales</p>
             </div>
           </div>
           <div class="flex items-center gap-2">
@@ -229,49 +234,86 @@ const totalFuentes = ref(0)
 const loadRealAuditLogs = async () => {
   loading.value = true
   try {
-    const [logs, proposals] = await Promise.all([
+    const [logs, proposals, queueRes] = await Promise.all([
       auditService.getAuditLogs(),
-      proposalService.listProposals()
+      proposalService.listProposals(),
+      proposalService.getQueue({ size: 1000 })
     ])
 
     totalEventos.value = logs.length
     totalFuentes.value = 4
 
-    // Agrupar eventos por item_id
+    // Separar y agrupar eventos
     const grouped: Record<string, any[]> = {}
+    const systemEvents: any[] = []
+
     for (const l of logs) {
-      const key = l.item_id || 'general'
-      if (!grouped[key]) grouped[key] = []
-      grouped[key].push(l)
+      if (l.item_id && l.item_id !== 'null' && l.item_id !== 'undefined' && l.item_id !== '') {
+        const key = String(l.item_id)
+        if (!grouped[key]) grouped[key] = []
+        grouped[key].push(l)
+      } else {
+        systemEvents.push(l)
+      }
     }
 
     const items: any[] = []
+
+    // 1. Eventos agrupados por publicación/registro
     for (const [itemId, evs] of Object.entries(grouped)) {
-      const relatedProp = proposals.find((p: any) => p.id === itemId)
-      const firstEv = evs[0]
-      const lastEv = evs[evs.length - 1]
-      const d = new Date(lastEv.timestamp)
+      const relatedProp = proposals.find((p: any) => String(p.id) === itemId)
+      const relatedQueue = queueRes?.items?.find((q: any) => String(q.id) === itemId || q.dspace_uuid === itemId)
+      const pubTitle = relatedQueue?.titulo || relatedProp?.title || `Publicación #${itemId.substring(0, 8)}`
+      const lastEv = evs[0]
+      const d = lastEv.timestamp ? new Date(lastEv.timestamp) : new Date()
 
       items.push({
-        id: itemId.substring(0, 8),
+        id: itemId.length > 12 ? itemId.substring(0, 8) : itemId,
         fullId: itemId,
-        nombre: relatedProp?.title || `Registro de Enriquecimiento #${itemId.substring(0, 8)}`,
+        isSystem: false,
+        nombre: pubTitle,
         metadatoRecuperado: evs.map((e: any) => e.action).filter((v, i, a) => a.indexOf(v) === i).join(', ') || 'Metadato',
         fecha: d.toLocaleDateString('es-CL', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
         eventos: evs.map((e: any) => {
-          const ed = new Date(e.timestamp)
-          const isApprove = e.action.toLowerCase().includes('aprob')
+          const ed = e.timestamp ? new Date(e.timestamp) : new Date()
+          const isApprove = e.action.toLowerCase().includes('aprob') || e.action.toLowerCase().includes('valid')
           const isReject = e.action.toLowerCase().includes('rechaz')
           return {
             time: ed.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
             event: e.action,
             user: e.user_name || 'Curador VRIIC',
             role: e.role || 'Curador',
-            source: 'MS3 Auth Auditoría',
-            result: e.new_value ? `Valor establecido: ${typeof e.new_value === 'string' ? e.new_value : JSON.stringify(e.new_value)}` : (e.rejection_reason ? `Motivo: ${e.rejection_reason}` : `Acción ${e.action} ejecutada.`),
+            source: 'MS3 Auth / MS4',
+            result: e.new_value ? (typeof e.new_value === 'string' ? e.new_value : JSON.stringify(e.new_value)) : (e.rejection_reason ? `Motivo: ${e.rejection_reason}` : `Acción ${e.action} ejecutada.`),
             color: isApprove ? '#2E7D32' : isReject ? '#E53935' : '#00aea7'
           }
         })
+      })
+    }
+
+    // 2. Eventos de sistema y seguridad (Login, Creación de usuario, etc.)
+    for (const sys of systemEvents) {
+      const sd = sys.timestamp ? new Date(sys.timestamp) : new Date()
+      const isLogin = sys.action.toLowerCase().includes('login') || sys.action.toLowerCase().includes('sesión')
+      const isUser = sys.action.toLowerCase().includes('usuario')
+      const eventTitle = isLogin ? `Inicio de sesión: ${sys.user_name || 'Usuario'}` : (isUser ? `Administración de usuarios: ${sys.action}` : `Evento de sistema: ${sys.action}`)
+
+      items.push({
+        id: isLogin ? 'AUTH' : (isUser ? 'USER' : 'SYS'),
+        fullId: sys.id,
+        isSystem: true,
+        nombre: eventTitle,
+        metadatoRecuperado: sys.action,
+        fecha: sd.toLocaleDateString('es-CL', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+        eventos: [{
+          time: sd.toLocaleTimeString('es-CL', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+          event: sys.action,
+          user: sys.user_name || 'Usuario Institucional',
+          role: sys.role || 'Sistema',
+          source: 'MS3 Auth Seguridad',
+          result: sys.new_value ? (typeof sys.new_value === 'string' ? sys.new_value : JSON.stringify(sys.new_value)) : `Acción ${sys.action} ejecutada satisfactoriamente.`,
+          color: isLogin ? '#1565C0' : (isUser ? '#7B1FA2' : '#00aea7')
+        }]
       })
     }
 

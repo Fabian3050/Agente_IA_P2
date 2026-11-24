@@ -49,7 +49,7 @@
           <thead>
             <tr class="border-b border-gray-50">
               <th
-                v-for="h in ['Registro & Título', 'Metadatos Enriquecidos', 'Valor sugerido', 'Fuente', 'Confianza', 'Responsable', 'Acción']"
+                v-for="h in ['Registro & Título', 'Metadatos Enriquecidos', 'Valor sugerido', 'Fuente', 'Confianza Enriquecimiento', 'Responsable', 'Acción']"
                 :key="h"
                 class="text-left px-4 py-3 text-[11px] font-semibold text-[#6b7a90] uppercase tracking-wide whitespace-nowrap"
               >
@@ -409,9 +409,38 @@ const loadRealData = async () => {
     ])
     realProposals.value = proposals
 
-    const mappedList: any[] = []
+    // Resoluciones guardadas en almacenamiento local de la sesión de curaduría
+    let localResolved: Record<string, string> = {}
+    try {
+      localResolved = JSON.parse(localStorage.getItem('curator_resolved_records') || '{}')
+    } catch {}
 
-    // 1. Priorizar publicaciones completadas/enriquecidas de dspace_enrichment_queue
+    // Conjunto de identificadores ya resueltos a partir de auditoría real
+    const resolvedAuditMap = new Map<string, string>()
+    for (const log of auditLogs || []) {
+      const act = (log.action || '').toLowerCase()
+      const rawId = String(log.item_id || '').trim()
+      if (rawId) {
+        if (act.includes('aprob')) resolvedAuditMap.set(rawId, 'aprobado')
+        else if (act.includes('rechaz')) resolvedAuditMap.set(rawId, 'rechazado')
+        else if (act.includes('edit') || act.includes('modif')) resolvedAuditMap.set(rawId, 'editado')
+      }
+    }
+
+    const checkResolved = (id: any, uuid?: string): string | null => {
+      const sId = String(id || '').trim()
+      const sUuid = String(uuid || '').trim()
+      if (localResolved[sId]) return localResolved[sId]
+      if (sUuid && localResolved[sUuid]) return localResolved[sUuid]
+      if (resolvedAuditMap.has(sId)) return resolvedAuditMap.get(sId)!
+      if (sUuid && resolvedAuditMap.has(sUuid)) return resolvedAuditMap.get(sUuid)!
+      return null
+    }
+
+    const pendingItems: any[] = []
+    const resolvedQueueHistory: any[] = []
+
+    // 1. Priorizar publicaciones de dspace_enrichment_queue
     if (queueRes?.items && queueRes.items.length > 0) {
       for (const it of queueRes.items) {
         const recMeta = it.metadatos_recuperados || {}
@@ -442,7 +471,7 @@ const loadRealData = async () => {
         const score = recMeta.max_score || recMeta.match_score
         const confianza = score ? Math.round(Number(score) * 100) : 95
 
-        mappedList.push({
+        const mappedRecord = {
           fullId: it.id,
           id: it.id,
           uuid: it.dspace_uuid,
@@ -464,34 +493,61 @@ const loadRealData = async () => {
           financiamiento: it.fuente_financiamiento,
           derechosAcceso: it.derechos_acceso,
           estadoActual: it.estado
-        })
+        }
+
+        const auditDecision = checkResolved(it.id, it.dspace_uuid)
+        const isApprovedState = it.estado === 'SINCRONIZADO_DSPACE' || auditDecision === 'aprobado'
+        const isResolvedState = isApprovedState || auditDecision === 'rechazado' || auditDecision === 'editado'
+
+        if (isResolvedState) {
+          const updDate = it.updated_at ? new Date(it.updated_at) : new Date()
+          const finalState = auditDecision || (it.estado === 'SINCRONIZADO_DSPACE' ? 'aprobado' : 'aprobado')
+          resolvedQueueHistory.push({
+            registro: `#${it.id}`,
+            campo: campoLabel,
+            valor: preview,
+            fuente: it.fuente_enriquecimiento || 'Motor IA / OpenAlex',
+            responsable: 'Curador VRIIC',
+            rol: 'Curador',
+            estado: finalState,
+            fecha: updDate.toLocaleDateString('es-CL', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+          })
+        } else {
+          // Registros en estado 'ENRIQUECIDO' esperando aprobación
+          pendingItems.push(mappedRecord)
+        }
       }
     } else if (proposals && proposals.length > 0) {
       // Fallback a propuestas v3 si la cola aún no tiene registros enriquecidos
-      const pending = proposals.filter((p: any) => p.status === 'PENDING_CURATION' || p.status === 'VALIDATING' || p.status === 'APPROVED' || p.status === 'ENRICHING' || !p.status || p.status === 'DETECTED')
+      const pending = proposals.filter((p: any) => p.status === 'PENDING_CURATION' || p.status === 'VALIDATING' || p.status === 'ENRICHING' || !p.status || p.status === 'DETECTED')
       for (const p of pending) {
-        mappedList.push({
-          fullId: p.id,
-          id: p.id,
-          registro: `#${String(p.id || '').substring(0, 8)}`,
-          title: p.title || `Propuesta #${p.id}`,
-          doi: p.doi || p.candidate_doi || '',
-          campo: p.field_name || p.field || 'Metadato',
-          camposList: [p.field_name || p.field || 'Metadato'],
-          valor: p.suggested_value || p.new_value || p.value || 'Propuesta de valor recuperado',
-          fuente: p.source || p.best_source || 'Motor IA / OpenAlex',
-          confianza: p.confidence ? Math.round(p.confidence * 100) : 95,
-          responsable: 'Curador VRIIC',
-          rol: 'Curador',
-          resumenOriginal: '[Campo incompleto / No registrado]'
-        })
+        const auditDecision = checkResolved(p.id, p.uuid_dspace)
+        const isResolvedState = p.status === 'APROBADA' || p.status === 'APPROVED' || p.status === 'RECHAZADA' || p.status === 'REJECTED' || !!auditDecision
+
+        if (!isResolvedState) {
+          pendingItems.push({
+            fullId: p.id,
+            id: p.id,
+            registro: `#${String(p.id || '').substring(0, 8)}`,
+            title: p.title || `Propuesta #${p.id}`,
+            doi: p.doi || p.candidate_doi || '',
+            campo: p.field_name || p.field || 'Metadato',
+            camposList: [p.field_name || p.field || 'Metadato'],
+            valor: p.suggested_value || p.new_value || p.value || 'Propuesta de valor recuperado',
+            fuente: p.source || p.best_source || 'Motor IA / OpenAlex',
+            confianza: p.confidence ? Math.round(p.confidence * 100) : 95,
+            responsable: 'Curador VRIIC',
+            rol: 'Curador',
+            resumenOriginal: '[Campo incompleto / No registrado]'
+          })
+        }
       }
     }
 
-    pendingList.value = mappedList
+    pendingList.value = pendingItems
 
     // Historial real de auditoría
-    history.value = (auditLogs || []).map((log: any) => {
+    const auditHistory = (auditLogs || []).map((log: any) => {
       const isApproved = log.action?.toLowerCase().includes('aprob')
       const isRejected = log.action?.toLowerCase().includes('rechaz')
       const isEdited = log.action?.toLowerCase().includes('edit') || log.action?.toLowerCase().includes('modif')
@@ -510,6 +566,18 @@ const loadRealData = async () => {
       }
     })
 
+    // Consolidar historial sin duplicados (resoluciones de cola sincronizada + logs de auditoría)
+    const seenHist = new Set<string>()
+    const finalHistory: any[] = []
+    for (const item of [...resolvedQueueHistory, ...auditHistory]) {
+      const key = `${item.registro}-${item.estado}`
+      if (!seenHist.has(key)) {
+        seenHist.add(key)
+        finalHistory.push(item)
+      }
+    }
+    history.value = finalHistory
+
     // Contadores en tiempo real
     countPendientes.value = pendingList.value.length
     countAprobados.value = history.value.filter(h => h.estado === 'aprobado').length
@@ -527,30 +595,53 @@ onMounted(() => {
 })
 
 const filteredHistory = computed(() => {
-  const decided = pendingList.value
-    .map((row, idx) => ({
-      ...row,
-      estado: decisions.value[idx],
-      fecha: 'Justo ahora',
-    }))
-    .filter(row => row.estado)
-
-  const combined = [...decided, ...history.value]
-  if (filterHistory.value === 'Todos') return combined
-  if (filterHistory.value === 'Aprobados') return combined.filter(r => r.estado === 'aprobado')
-  if (filterHistory.value === 'Editados') return combined.filter(r => r.estado === 'editado')
-  if (filterHistory.value === 'Rechazados') return combined.filter(r => r.estado === 'rechazado')
-  return combined
+  if (filterHistory.value === 'Todos') return history.value
+  if (filterHistory.value === 'Aprobados') return history.value.filter(r => r.estado === 'aprobado')
+  if (filterHistory.value === 'Editados') return history.value.filter(r => r.estado === 'editado')
+  if (filterHistory.value === 'Rechazados') return history.value.filter(r => r.estado === 'rechazado')
+  return history.value
 })
 
 const applyDecision = async (idx: number, decision: 'aprobado' | 'rechazado') => {
   const row = pendingList.value[idx]
+  if (!row) return
+
+  // 1. Inmunidad inmediata ante refresco: registrar en almacenamiento local
+  try {
+    const local = JSON.parse(localStorage.getItem('curator_resolved_records') || '{}')
+    if (row.id) local[String(row.id)] = decision
+    if (row.uuid) local[String(row.uuid)] = decision
+    localStorage.setItem('curator_resolved_records', JSON.stringify(local))
+  } catch {}
+
   if (row?.id) {
     try {
       if (decision === 'aprobado') {
         await proposalService.approveQueueItem(row.id)
       } else {
         await proposalService.rejectQueueItem(row.id, 'Rechazado en sección de aprobación')
+      }
+
+      // Si tiene uuid distinto de id, asegurar también por uuid en la cola
+      if (row.uuid && String(row.uuid) !== String(row.id)) {
+        try {
+          if (decision === 'aprobado') {
+            await proposalService.approveQueueItem(row.uuid)
+          } else {
+            await proposalService.rejectQueueItem(row.uuid, 'Rechazado en sección de aprobación')
+          }
+        } catch {}
+      }
+
+      // Si es una propuesta formal v3 (ItemEnrichment con UUID)
+      if (typeof row.id === 'string' && row.id.includes('-')) {
+        try {
+          const storedUser = authService.getStoredUser()
+          await proposalService.curateProposal(row.id, {
+            action: decision === 'aprobado' ? 'APPROVE' : 'REJECT',
+            curator_id: storedUser?.id
+          })
+        } catch {}
       }
 
       // Registrar también en bitácora inmutable de MS3
@@ -569,16 +660,45 @@ const applyDecision = async (idx: number, decision: 'aprobado' | 'rechazado') =>
       console.warn('Error registrando decisión en backend:', err)
     }
   }
+
   decisions.value[idx] = decision
   if (decision === 'aprobado') countAprobados.value++
   if (decision === 'rechazado') countRechazados.value++
   countPendientes.value = Math.max(0, countPendientes.value - 1)
+
+  // Remover de la tabla de pendientes tras breve retroalimentación visual e integrar al historial
+  setTimeout(() => {
+    const currentIdx = pendingList.value.findIndex(p => p.id === row.id)
+    if (currentIdx !== -1) {
+      const [resolved] = pendingList.value.splice(currentIdx, 1)
+      delete decisions.value[idx]
+      history.value.unshift({
+        registro: resolved.registro,
+        campo: resolved.campo,
+        valor: resolved.valor,
+        fuente: resolved.fuente,
+        responsable: 'Curador VRIIC',
+        rol: 'Curador',
+        estado: decision,
+        fecha: 'Justo ahora'
+      })
+    }
+  }, 400)
 }
 
 const openEditModal = async (row: any, idx: number) => {
   const newVal = prompt('Modificar valor del metadato antes de aprobar:', row.valor)
   if (newVal !== null) {
     row.valor = newVal
+
+    // Inmunidad inmediata ante refresco
+    try {
+      const local = JSON.parse(localStorage.getItem('curator_resolved_records') || '{}')
+      if (row.id) local[String(row.id)] = 'editado'
+      if (row.uuid) local[String(row.uuid)] = 'editado'
+      localStorage.setItem('curator_resolved_records', JSON.stringify(local))
+    } catch {}
+
     if (row?.id) {
       try {
         await proposalService.editQueueItem(row.id, { valor: newVal })
@@ -600,10 +720,35 @@ const openEditModal = async (row: any, idx: number) => {
     decisions.value[idx] = 'editado'
     countEditados.value++
     countPendientes.value = Math.max(0, countPendientes.value - 1)
+
+    setTimeout(() => {
+      const currentIdx = pendingList.value.findIndex(p => p.id === row.id)
+      if (currentIdx !== -1) {
+        const [edited] = pendingList.value.splice(currentIdx, 1)
+        delete decisions.value[idx]
+        history.value.unshift({
+          registro: edited.registro,
+          campo: edited.campo,
+          valor: edited.valor,
+          fuente: edited.fuente,
+          responsable: 'Curador VRIIC',
+          rol: 'Curador',
+          estado: 'editado',
+          fecha: 'Justo ahora'
+        })
+      }
+    }, 400)
   }
 }
 
 const reprocessRejected = async () => {
+  try {
+    const local = JSON.parse(localStorage.getItem('curator_resolved_records') || '{}')
+    for (const k of Object.keys(local)) {
+      if (local[k] === 'rechazado') delete local[k]
+    }
+    localStorage.setItem('curator_resolved_records', JSON.stringify(local))
+  } catch {}
   alert('Los registros rechazados han sido reiniciados para re-procesarse automáticamente con el agente inteligente.')
   await loadRealData()
 }
@@ -611,9 +756,9 @@ const reprocessRejected = async () => {
 const exportSafeCSV = async () => {
   exporting.value = true
   try {
-    const approvedItems = pendingList.value.filter((_, idx) => decisions.value[idx] === 'aprobado')
+    const approvedItems = history.value.filter(h => h.estado === 'aprobado')
     const itemIds = approvedItems.length > 0
-      ? approvedItems.map(p => ({ item_id: String(p.id) }))
+      ? approvedItems.map(p => ({ item_id: String(p.registro).replace('#', '') }))
       : [{ item_id: 'sample-export-item' }]
 
     const result = await proposalService.exportCSV(itemIds)

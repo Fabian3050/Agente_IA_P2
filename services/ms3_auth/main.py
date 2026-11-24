@@ -40,15 +40,19 @@ app.include_router(auth_router)
 def startup():
     Base.metadata.create_all(bind=engine)
 
-    # Migración idempotente para asegurar columnas OIDC en tabla 'user'
+    # Migración idempotente para asegurar columnas OIDC en tabla 'user' y flexibilidad en 'audit_log'
     try:
         with engine.connect() as conn:
             conn.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS sub VARCHAR(255);'))
             conn.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS last_login TIMESTAMP;'))
             conn.execute(text('CREATE UNIQUE INDEX IF NOT EXISTS ix_user_sub ON "user" (sub);'))
+            # Migración defensiva para audit_log: permitir NULL en id_item_enrichment y DROP FK constraint si existiera
+            conn.execute(text('ALTER TABLE "audit_log" ALTER COLUMN id_item_enrichment DROP NOT NULL;'))
+            conn.execute(text('ALTER TABLE "audit_log" DROP CONSTRAINT IF EXISTS audit_log_id_item_enrichment_fkey;'))
+            conn.execute(text('ALTER TABLE "audit_log" ALTER COLUMN id_item_enrichment TYPE VARCHAR(100) USING id_item_enrichment::varchar;'))
             conn.commit()
     except Exception as e:
-        print(f"[MS3] Esquema 'user' actualizado / advertencia: {e}")
+        print(f"[MS3] Esquema 'user' / 'audit_log' actualizado / advertencia: {e}")
 
     try:
         db = SessionLocal()

@@ -211,6 +211,10 @@ const handleDirectLogin = async () => {
     error.value = 'Por favor ingrese su correo o usuario institucional.'
     return
   }
+  if (!email.value.trim().toLowerCase().endsWith('@usach.cl')) {
+    error.value = 'Acceso restringido: Solo se permiten cuentas de correo institucional (@usach.cl).'
+    return
+  }
 
   loading.value = true
   try {
@@ -227,6 +231,10 @@ const handleDirectLogin = async () => {
  * Autenticación simulada (Sandbox OIDC) que solicita un token JWT real a MS3 Auth (/auth/mock-login).
  */
 const quickLogin = async (userEmail: string, roleName: 'Admin' | 'Curador_VRIIC' | 'Academico') => {
+  if (!userEmail.trim().toLowerCase().endsWith('@usach.cl')) {
+    error.value = 'Acceso restringido: Solo se permiten cuentas de correo institucional (@usach.cl).'
+    return
+  }
   loading.value = true
   error.value = ''
   try {

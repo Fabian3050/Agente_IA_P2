@@ -1,9 +1,9 @@
 import uuid
 from datetime import datetime
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Union
 from sqlalchemy import Column, String, Boolean, JSON, Text, DateTime, ForeignKey, Uuid
 from sqlalchemy.orm import relationship
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 try:
     from common.database import Base
@@ -47,7 +47,7 @@ class User(Base):
 
 class AuditLog(Base):
     """
-    Bitácora inmutable de decisiones humanas de curaduría (INSERT-only).
+    Bitácora inmutable de decisiones humanas de curaduría y eventos de sistema (INSERT-only).
     Se revoca UPDATE y DELETE para garantizar inmutabilidad según Sección 2.5.
     """
     __tablename__ = "audit_log"
@@ -55,8 +55,8 @@ class AuditLog(Base):
 
     id = Column(Uuid, primary_key=True, default=uuid.uuid4)
     id_user = Column(Uuid, ForeignKey("user.id"), nullable=False, index=True)
-    id_item_enrichment = Column(Uuid, nullable=False, index=True)
-    action = Column(String(50), nullable=False)                  # 'Aprobar', 'Rechazar', 'Editar', 'Invalidar'
+    id_item_enrichment = Column(String(100), nullable=True, index=True)
+    action = Column(String(100), nullable=False)                  # 'Aprobar', 'Rechazar', 'Editar', 'Validar', 'Inicio de sesión', etc.
     previous_value = Column(JSON, nullable=True)
     new_value = Column(JSON, nullable=True)
     rejection_reason = Column(Text, nullable=True)
@@ -70,9 +70,9 @@ class AuditLog(Base):
 # =============================================================================
 
 class AuditLogCreateRequest(BaseModel):
-    user_id: uuid.UUID
-    item_id: uuid.UUID
-    action: str = Field(description="'Aprobar', 'Rechazar', 'Editar', 'Invalidar'")
+    user_id: Optional[Union[uuid.UUID, str]] = None
+    item_id: Optional[Union[uuid.UUID, str]] = None
+    action: str = Field(description="Acción realizada ('Aprobar', 'Rechazar', 'Editar', 'Validar', 'Inicio de sesión', 'Crear Usuario', etc.)")
     previous_value: Optional[Dict[str, Any]] = None
     new_value: Optional[Dict[str, Any]] = None
     rejection_reason: Optional[str] = None
@@ -80,8 +80,8 @@ class AuditLogCreateRequest(BaseModel):
 
 class AuditLogDTO(BaseModel):
     id: uuid.UUID
-    user_id: uuid.UUID
-    item_id: uuid.UUID
+    user_id: Optional[Union[uuid.UUID, str]] = None
+    item_id: Optional[str] = None
     action: str
     previous_value: Optional[Dict[str, Any]] = None
     new_value: Optional[Dict[str, Any]] = None
@@ -126,6 +126,14 @@ class MockLoginRequest(BaseModel):
     orcid: Optional[str] = None
     dspace_person_id: Optional[str] = None
 
+    @field_validator("email")
+    @classmethod
+    def validate_institutional_email(cls, v: str) -> str:
+        clean = v.strip().lower()
+        if not clean.endswith("@usach.cl"):
+            raise ValueError(f"Acceso denegado: El correo '{clean}' no pertenece al dominio institucional (@usach.cl).")
+        return clean
+
 
 class CreateUserRequest(BaseModel):
     email: str = Field(description="Correo electrónico institucional")
@@ -136,6 +144,14 @@ class CreateUserRequest(BaseModel):
     dspace_person_id: Optional[str] = Field(default=None, description="UUID del perfil de persona en DSpace-CRIS")
     sub: Optional[str] = Field(default=None, description="Subject OIDC del proveedor institucional")
     is_active: bool = Field(default=True, description="Estado de activación del usuario")
+
+    @field_validator("email")
+    @classmethod
+    def validate_institutional_email(cls, v: str) -> str:
+        clean = v.strip().lower()
+        if not clean.endswith("@usach.cl"):
+            raise ValueError(f"Acceso denegado: El correo '{clean}' debe pertenecer al dominio institucional (@usach.cl).")
+        return clean
 
 
 class TokenIntrospectRequest(BaseModel):

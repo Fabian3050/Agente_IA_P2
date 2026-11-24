@@ -260,6 +260,7 @@ import { Search, Cpu, ShieldCheck, Eye, X, ExternalLink } from 'lucide-vue-next'
 import Card from '../components/common/Card.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
 import { proposalService } from '../services/proposalService'
+import { auditService } from '../services/auditService'
 import type { User } from '../types'
 
 const props = defineProps<{
@@ -334,6 +335,20 @@ const validateItem = async (item: any) => {
     const targetId = item.rawId || item.fullId || item.id
     await proposalService.validateRecord(targetId)
     item.estado = 'Validado / Aprobado'
+
+    try {
+      await auditService.recordAction({
+        action: 'Validar',
+        item_id: String(targetId),
+        new_value: {
+          titulo: item.title,
+          campo: item.campo,
+          confianza: item.confianza,
+          doi: item.doi
+        }
+      })
+    } catch {}
+
     alert(`¡Validación exitosa para el registro #${item.id}! El metadato ha sido aprobado y marcado como enriquecido.`)
     await loadProposals()
   } catch (err: any) {

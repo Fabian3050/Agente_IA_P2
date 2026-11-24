@@ -175,7 +175,8 @@ class OIDCService:
                 "redirect_uri": redir,
                 "state": st,
                 "access_type": "offline",
-                "prompt": "select_account"
+                "prompt": "select_account",
+                "hd": "usach.cl"
             }
             return f"{auth_endpoint}?{urlencode(params)}"
 
@@ -278,6 +279,8 @@ class OIDCService:
             raise ValueError("Las claims OIDC deben incluir un 'email' válido")
 
         email = email.lower().strip()
+        if not email.endswith("@usach.cl"):
+            raise ValueError(f"Acceso denegado: El correo '{email}' no pertenece al dominio institucional (@usach.cl).")
         sub = claims.get("sub")
         name = claims.get("given_name") or claims.get("name") or "Usuario"
         last_name = claims.get("family_name") or "Institucional"
