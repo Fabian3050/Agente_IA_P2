@@ -51,6 +51,16 @@ export const proposalService = {
     }
   },
 
+  async getReportsAnalytics(period: string = 'month'): Promise<any> {
+    try {
+      const res = await ms4Client.get('/dspace/reports/analytics', { params: { period } })
+      return res.data
+    } catch (err) {
+      console.error('Error obteniendo analítica de reportes:', err)
+      return null
+    }
+  },
+
   async getValidationRecords(orcid?: string): Promise<any[]> {
     try {
       const res = await ms4Client.get('/dspace/validation-records', {
