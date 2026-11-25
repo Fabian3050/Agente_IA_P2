@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import threading
 from datetime import datetime
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
@@ -42,11 +43,7 @@ def compute_next_scheduled_run() -> datetime:
 class AnnualCampaignManager:
     """
     Gestor de la Campaña Anual y Enriquecimiento Autónomo / Manual de publicaciones.
-    Permite:
-    1. Ejecución autónoma programada según calendario (ej. 15 de abril a las 02:00 AM).
-    2. Ejecución manual bajo demanda en cualquier momento del año.
-    3. Consulta de estado y progreso en tiempo real.
-    4. Detención elegante de la campaña en curso.
+    Garantiza la ejecución en segundo plano sin bloquear el servidor web.
     """
 
     def __init__(self):
@@ -66,6 +63,11 @@ class AnnualCampaignManager:
         self.last_error: Optional[str] = None
         self.stop_requested: bool = False
         self._background_task: Optional[asyncio.Task] = None
+        self.main_loop: Optional[asyncio.AbstractEventLoop] = None
+
+    def set_main_loop(self, loop: asyncio.AbstractEventLoop):
+        """Registra el event loop principal de FastAPI para programar corrutinas."""
+        self.main_loop = loop
 
     def get_status(self) -> Dict[str, Any]:
         """Retorna el estado detallado de la campaña y métricas en tiempo real."""
@@ -102,7 +104,7 @@ class AnnualCampaignManager:
     def start_campaign(
         self,
         classify_with_ai: bool = True,
-        auto_harvest: bool = True,
+        auto_harvest: bool = False,
         batch_size: int = 10,
         is_scheduled: bool = False,
         curator_user: Optional[Dict[str, Any]] = None
@@ -130,24 +132,42 @@ class AnnualCampaignManager:
         self.last_error = None
         self.stop_requested = False
 
-        # Iniciar pipeline asíncrono
+        print(f"[CampaignManager] Campaña iniciada ({self.trigger_type}) por {curator_user.get('name') if curator_user else 'Sistema'}", flush=True)
+
+        # Determinar el loop activo para programar la corrutina
+        loop = None
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            try:
-                loop = asyncio.get_event_loop()
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
+            if self.main_loop and self.main_loop.is_running():
+                loop = self.main_loop
 
-        self._background_task = loop.create_task(
-            self._execute_campaign_pipeline(
-                classify_with_ai=classify_with_ai,
-                auto_harvest=auto_harvest,
-                batch_size=batch_size,
-                is_scheduled=is_scheduled
+        if loop and loop.is_running():
+            self._background_task = loop.create_task(
+                self._execute_campaign_pipeline(
+                    classify_with_ai=classify_with_ai,
+                    auto_harvest=auto_harvest,
+                    batch_size=batch_size,
+                    is_scheduled=is_scheduled
+                )
             )
-        )
+        else:
+            # Fallback seguro: hilo dedicado con su propio loop
+            def run_in_dedicated_thread():
+                new_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(new_loop)
+                new_loop.run_until_complete(
+                    self._execute_campaign_pipeline(
+                        classify_with_ai=classify_with_ai,
+                        auto_harvest=auto_harvest,
+                        batch_size=batch_size,
+                        is_scheduled=is_scheduled
+                    )
+                )
+                new_loop.close()
+
+            t = threading.Thread(target=run_in_dedicated_thread, daemon=True, name="AnnualCampaignWorker")
+            t.start()
 
         return {
             "ok": True,
@@ -167,33 +187,57 @@ class AnnualCampaignManager:
         self.stop_requested = True
         self.status = "STOPPING"
         self.current_step = "Detención solicitada. Concluyendo el registro actual..."
+        print("[CampaignManager] Solicitud de detención recibida.", flush=True)
         return {
             "ok": True,
             "message": "Detención solicitada. La campaña finalizará al concluir el ítem en proceso.",
             "status": self.get_status()
         }
 
+    def reset_state(self) -> Dict[str, Any]:
+        """Fuerza el reinicio del estado de la campaña en memoria a Inactivo (IDLE)."""
+        self.is_running = False
+        self.stop_requested = False
+        self.status = "IDLE"
+        self.current_step = "Estado de campaña reiniciado a Inactivo."
+        self.current_item_title = None
+        print("[CampaignManager] Estado reiniciado forzosamente a IDLE.", flush=True)
+        return {"ok": True, "message": "Estado de la campaña reiniciado.", "status": self.get_status()}
+
     async def _execute_campaign_pipeline(
         self,
         classify_with_ai: bool = True,
-        auto_harvest: bool = True,
+        auto_harvest: bool = False,
         batch_size: int = 10,
         is_scheduled: bool = False
     ):
-        """Ejecuta el pipeline completo: escaneo opcional, enriquecimiento por lote y auditoría."""
+        """Ejecuta el pipeline completo: escaneo opcional si cola vacía, enriquecimiento y auditoría."""
         db: Session = SessionLocal()
         enrichment_service = EnrichmentService()
         dspace_service = DSpaceService()
         ms3_client = MS3Client()
 
         try:
-            # 1. Escaneo inicial de DSpace-CRIS si auto_harvest está habilitado
+            print("[CampaignManager] Iniciando pipeline de campaña...", flush=True)
+
+            # 1. Escaneo inicial de DSpace-CRIS SOLO si auto_harvest está habilitado y la cola está vacía
             if auto_harvest:
-                self.current_step = "Escaneando DSpace-CRIS y sincronizando cola de publicaciones..."
-                try:
-                    await dspace_service.count_missing(save_to_db=True, use_cache=True, db=db)
-                except Exception as e_scan:
-                    logger.warning(f"[CampaignManager] Advertencia en escaneo inicial de DSpace: {e_scan}")
+                pending_count = (
+                    db.query(DSpaceEnrichmentQueue)
+                    .filter(DSpaceEnrichmentQueue.estado == "PENDIENTE")
+                    .count()
+                )
+                if pending_count == 0:
+                    self.current_step = "Cola vacía. Escaneando DSpace-CRIS para detectar publicaciones incompletas..."
+                    print(f"[CampaignManager] {self.current_step}", flush=True)
+                    try:
+                        await dspace_service.count_missing(save_to_db=True, use_cache=True, db=db)
+                    except Exception as e_scan:
+                        logger.warning(f"[CampaignManager] Advertencia en escaneo inicial de DSpace: {e_scan}")
+                        print(f"[CampaignManager] Advertencia en escaneo inicial: {e_scan}", flush=True)
+                else:
+                    self.current_step = f"Cola detectada con {pending_count} registros pendientes. Iniciando enriquecimiento directo..."
+                    print(f"[CampaignManager] {self.current_step}", flush=True)
 
             if self.stop_requested:
                 self.status = "STOPPED"
@@ -213,33 +257,44 @@ class AnnualCampaignManager:
 
             self.total_items = len(pending_items)
             self.current_step = f"Enriqueciendo {self.total_items} publicaciones pendientes..."
+            print(f"[CampaignManager] Total de publicaciones a procesar: {self.total_items}", flush=True)
+
+            if self.total_items == 0:
+                self.current_step = "No se encontraron publicaciones en estado PENDIENTE en la cola."
+                self.status = "COMPLETED"
+                print(f"[CampaignManager] {self.current_step}", flush=True)
+                return
 
             for it in pending_items:
                 if self.stop_requested:
                     self.status = "STOPPED"
                     self.current_step = f"Campaña detenida por el usuario tras procesar {self.processed_items}/{self.total_items} publicaciones."
+                    print(f"[CampaignManager] {self.current_step}", flush=True)
                     break
 
                 self.current_item_title = it.titulo or f"Publicación #{it.id}"
+                print(f"[CampaignManager] [{self.processed_items + 1}/{self.total_items}] Procesando #{it.id} ({self.current_item_title[:60]})...", flush=True)
 
                 try:
                     res = await enrichment_service.enrich_item(it, db, classify_with_ai=classify_with_ai)
-                    st = res.get("estado")
+                    st = res.get("estado") if isinstance(res, dict) else "ENRIQUECIDO"
                     if st in ["ENRIQUECIDO", "COMPLETO", "PENDIENTE_VALIDACION", "CLASIFICADO_LLM", "ENRIQUECIDO_FUENTES"]:
                         self.success_count += 1
                     else:
                         self.failed_count += 1
                 except Exception as e_item:
                     logger.warning(f"[CampaignManager] Error enriqueciendo publicación #{it.id}: {e_item}")
+                    print(f"[CampaignManager] Error en publicación #{it.id}: {e_item}", flush=True)
                     self.failed_count += 1
 
                 self.processed_items += 1
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0.1)
 
             if not self.stop_requested:
                 self.status = "COMPLETED"
                 self.current_step = f"Campaña concluida: {self.processed_items} publicaciones procesadas ({self.success_count} exitosas, {self.failed_count} con alertas)."
                 self.last_run_year = datetime.now().year
+                print(f"[CampaignManager] {self.current_step}", flush=True)
 
             self.completed_at = datetime.utcnow().isoformat()
 
@@ -268,6 +323,7 @@ class AnnualCampaignManager:
             self.last_error = str(e)
             self.current_step = f"Error en la ejecución de la campaña: {e}"
             logger.error(f"[CampaignManager] Error crítico en campaña: {e}")
+            print(f"[CampaignManager] Error crítico: {e}", flush=True)
         finally:
             self.is_running = False
             self.stop_requested = False

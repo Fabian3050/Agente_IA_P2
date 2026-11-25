@@ -75,6 +75,17 @@ class TestCampaignService(unittest.TestCase):
             self.assertTrue(self.manager.is_running)
             self.assertEqual(self.manager.trigger_type, "MANUAL")
 
+    def test_reset_state(self):
+        """Verifica que reset_state fuerce el estado a IDLE y limpie flags."""
+        self.manager.is_running = True
+        self.manager.stop_requested = True
+        self.manager.status = "ERROR"
+        res = self.manager.reset_state()
+        self.assertTrue(res["ok"])
+        self.assertFalse(self.manager.is_running)
+        self.assertFalse(self.manager.stop_requested)
+        self.assertEqual(self.manager.status, "IDLE")
+
 
 if __name__ == "__main__":
     unittest.main()

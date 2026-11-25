@@ -187,6 +187,11 @@ export const proposalService = {
   async stopCampaign(): Promise<any> {
     const res = await ms4Client.post('/dspace/campaign/stop')
     return res.data
+  },
+
+  async resetCampaign(): Promise<any> {
+    const res = await ms4Client.post('/dspace/campaign/reset')
+    return res.data
   }
 }
 

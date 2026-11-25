@@ -98,6 +98,7 @@ def startup():
         except ImportError:
             from campaign_service import campaign_manager
         loop = asyncio.get_event_loop()
+        campaign_manager.set_main_loop(loop)
         loop.create_task(campaign_manager.scheduler_worker_loop())
         logger.info("[MS4] Vigilancia del Scheduler de Campaña Anual iniciada exitosamente.")
     except Exception as e:

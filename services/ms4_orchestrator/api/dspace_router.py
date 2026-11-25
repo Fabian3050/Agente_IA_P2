@@ -883,9 +883,9 @@ def get_campaign_status():
     return campaign_manager.get_status()
 
 @router.post("/campaign/start")
-def start_campaign(
+async def start_campaign(
     classify_with_ai: bool = Query(True, description="Clasificar áreas OCDE y ODS con IA (Ollama)"),
-    auto_harvest: bool = Query(True, description="Escanear DSpace-CRIS previamente e ingresar faltantes a la cola"),
+    auto_harvest: bool = Query(False, description="Escanear DSpace-CRIS previamente solo si la cola está vacía"),
     batch_size: int = Query(10, description="Tamaño de lote para procesamiento"),
     curator_name: Optional[str] = Query(None, description="Nombre del curador si la ejecución es manual desde la UI"),
     curator_id: Optional[str] = Query(None, description="ID del curador responsable")
@@ -912,7 +912,7 @@ def start_campaign(
     )
 
 @router.post("/campaign/stop")
-def stop_campaign():
+async def stop_campaign():
     """
     Solicita la detención elegante de la campaña de enriquecimiento en curso.
     """
@@ -921,3 +921,16 @@ def stop_campaign():
     except ImportError:
         from campaign_service import campaign_manager
     return campaign_manager.stop_campaign()
+
+@router.post("/campaign/reset")
+def reset_campaign_state():
+    """
+    Fuerza el reinicio del estado de la campaña en memoria a Inactivo (IDLE).
+    Útil para destrabar el estado si un proceso previo fue interrumpido.
+    """
+    try:
+        from services.campaign_service import campaign_manager
+    except ImportError:
+        from campaign_service import campaign_manager
+    return campaign_manager.reset_state()
+

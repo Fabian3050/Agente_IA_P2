@@ -63,16 +63,25 @@
             <Play :size="13" />
             <span>{{ startingCampaign ? 'Iniciando...' : 'Lanzar Campaña Anual Ahora' }}</span>
           </button>
-          <button
-            v-else
-            @click="stopActiveCampaign"
-            :disabled="stoppingCampaign"
-            class="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg shadow-xs transition-all cursor-pointer disabled:opacity-50"
-            title="Detener elegantemente la campaña de enriquecimiento en curso"
-          >
-            <Square :size="13" />
-            <span>{{ stoppingCampaign ? 'Deteniendo...' : 'Detener Campaña' }}</span>
-          </button>
+          <div v-else class="flex items-center gap-1.5">
+            <button
+              @click="stopActiveCampaign"
+              :disabled="stoppingCampaign"
+              class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg shadow-xs transition-all cursor-pointer disabled:opacity-50"
+              title="Detener elegantemente la campaña de enriquecimiento en curso"
+            >
+              <Square :size="13" />
+              <span>{{ stoppingCampaign ? 'Deteniendo...' : 'Detener' }}</span>
+            </button>
+            <button
+              @click="resetCampaign"
+              class="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium text-slate-500 hover:text-slate-700 bg-white border border-gray-200 rounded-lg shadow-xs transition-all cursor-pointer"
+              title="Restablecer el estado en caso de proceso colgado"
+            >
+              <RotateCcw :size="12" />
+              <span>Reiniciar</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -609,7 +618,8 @@ import {
   CalendarCheck,
   Activity,
   Play,
-  Square
+  Square,
+  RotateCcw
 } from 'lucide-vue-next'
 import Card from '../components/common/Card.vue'
 import Badge from '../components/common/Badge.vue'
@@ -965,7 +975,7 @@ const triggerManualCampaign = async () => {
     const user = authService.getStoredUser()
     const res = await proposalService.startCampaign({
       classify_with_ai: true,
-      auto_harvest: true,
+      auto_harvest: false,
       batch_size: 10,
       curator_name: user?.fullName || 'Curador VRIIC',
       curator_id: user?.id
@@ -993,6 +1003,18 @@ const stopActiveCampaign = async () => {
     alert(`Error deteniendo campaña: ${err?.message || err}`)
   } finally {
     stoppingCampaign.value = false
+  }
+}
+
+const resetCampaign = async () => {
+  if (!confirm('¿Deseas restablecer el estado de la campaña a inactivo?')) return
+  try {
+    await proposalService.resetCampaign()
+    clearInterval(campaignPollTimer)
+    await fetchCampaignStatus()
+    await loadRealQueue()
+  } catch (err: any) {
+    alert(`Error reiniciando estado de campaña: ${err?.message || err}`)
   }
 }
 
