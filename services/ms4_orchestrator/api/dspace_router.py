@@ -775,6 +775,13 @@ async def enrich_item(
     Recupera abstract, keywords, financiamiento y derechos desde fuentes académicas,
     y opcionalmente clasifica en áreas OCDE y ODS usando el LLM (Ollama).
     """
+    try:
+        from services.campaign_service import campaign_manager
+        if campaign_manager.is_running:
+            raise HTTPException(status_code=409, detail="La campaña de enriquecimiento está en curso. El enriquecimiento manual está temporalmente pausado para no sobrecargar el sistema.")
+    except ImportError:
+        pass
+
     from services.enrichment_service import EnrichmentService
     service = EnrichmentService()
     resultado = await service.enrich_item_by_id(item_id, db, classify_with_ai=classify_with_ai)
@@ -808,6 +815,13 @@ async def enrich_next_batch(
     Toma los siguientes N registros en estado PENDIENTE de la cola y ejecuta el pipeline de enriquecimiento.
     Ideal para procesar y probar en lotes controlados (1, 5, 10 ítems).
     """
+    try:
+        from services.campaign_service import campaign_manager
+        if campaign_manager.is_running:
+            raise HTTPException(status_code=409, detail="La campaña de enriquecimiento está en curso. El enriquecimiento manual está temporalmente pausado para no sobrecargar el sistema.")
+    except ImportError:
+        pass
+
     from services.enrichment_service import EnrichmentService
     service = EnrichmentService()
     return await service.enrich_batch(limit=limit, estado_filtro="PENDIENTE", classify_with_ai=classify_with_ai, db=db)

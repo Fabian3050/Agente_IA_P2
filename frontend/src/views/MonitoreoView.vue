@@ -119,10 +119,10 @@
         <div class="flex gap-2 ml-auto flex-wrap items-center">
           <button
             @click="scanAndPopulateMissing"
-            :disabled="scanningMissing || runningBatch"
-            class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white rounded-lg shadow-sm hover:opacity-95 transition-all cursor-pointer disabled:opacity-50"
+            :disabled="scanningMissing || runningBatch || campaignStatus?.is_running"
+            class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white rounded-lg shadow-sm hover:opacity-95 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             style="background: #1565C0"
-            title="Escanear DSpace-CRIS y guardar elementos que carecen de metadatos completos en la cola de enriquecimiento"
+            :title="campaignStatus?.is_running ? 'Deshabilitado mientras la campaña de enriquecimiento está en curso' : 'Escanear DSpace-CRIS y guardar elementos que carecen de metadatos completos en la cola de enriquecimiento'"
           >
             <div v-if="scanningMissing" class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
             <RefreshCw v-else :size="13" />
@@ -131,9 +131,10 @@
 
           <button
             @click="runAgentOnAll"
-            :disabled="runningBatch || scanningMissing"
-            class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white rounded-lg shadow-sm hover:opacity-95 transition-all cursor-pointer disabled:opacity-50"
+            :disabled="runningBatch || scanningMissing || campaignStatus?.is_running"
+            class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-white rounded-lg shadow-sm hover:opacity-95 transition-all cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
             style="background: #00aea7"
+            :title="campaignStatus?.is_running ? 'Deshabilitado mientras la campaña de enriquecimiento está en curso para evitar conflictos y sobrecarga' : 'Enriquecer todos los pendientes'"
           >
             <Zap :size="13" />
             <span>{{ runningBatch ? 'Enriqueciendo...' : 'Enriquecer todos los pendientes' }}</span>
@@ -299,11 +300,11 @@
                   </button>
                   <button
                     @click="runAgentSingle(row)"
-                    :disabled="enrichingIds[row.id] || row.estado === 'Completado' || row.estado === 'Pendiente de validación'"
-                    :title="row.estado === 'Completado' ? 'Registro enriquecido' : row.estado === 'Pendiente de validación' ? 'Registro enriquecido (requiere validación manual en sección Validación)' : 'Ejecutar agente sobre este único registro'"
+                    :disabled="enrichingIds[row.id] || row.estado === 'Completado' || row.estado === 'Pendiente de validación' || campaignStatus?.is_running"
+                    :title="campaignStatus?.is_running ? 'Enriquecimiento individual deshabilitado temporalmente mientras la campaña está en curso' : (row.estado === 'Completado' ? 'Registro enriquecido' : row.estado === 'Pendiente de validación' ? 'Registro enriquecido (requiere validación manual en sección Validación)' : 'Ejecutar agente sobre este único registro')"
                     class="p-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer disabled:cursor-not-allowed"
                     :class="[
-                      row.estado === 'Completado' ? 'text-emerald-600 bg-emerald-50' : row.estado === 'Pendiente de validación' ? 'text-amber-700 bg-amber-50 border border-amber-200' : 'text-[#1565C0] hover:bg-blue-50'
+                      campaignStatus?.is_running ? 'text-slate-300 opacity-40' : (row.estado === 'Completado' ? 'text-emerald-600 bg-emerald-50' : row.estado === 'Pendiente de validación' ? 'text-amber-700 bg-amber-50 border border-amber-200' : 'text-[#1565C0] hover:bg-blue-50')
                     ]"
                   >
                     <div v-if="enrichingIds[row.id]" class="w-3.5 h-3.5 border-2 border-[#1565C0] border-t-transparent rounded-full animate-spin"></div>
@@ -586,8 +587,9 @@
           <button
             v-else
             @click="runAgentSingle(selectedRecord)"
-            :disabled="enrichingIds[selectedRecord.id]"
-            class="px-4 py-2 text-xs font-semibold text-white rounded-lg shadow-sm hover:opacity-95 cursor-pointer flex items-center gap-1.5 disabled:opacity-50"
+            :disabled="enrichingIds[selectedRecord.id] || campaignStatus?.is_running"
+            :title="campaignStatus?.is_running ? 'Enriquecimiento deshabilitado temporalmente mientras la campaña está en curso' : 'Enriquecer con Agente'"
+            class="px-4 py-2 text-xs font-semibold text-white rounded-lg shadow-sm hover:opacity-95 cursor-pointer flex items-center gap-1.5 disabled:opacity-50 disabled:cursor-not-allowed"
             style="background: #00aea7"
           >
             <div v-if="enrichingIds[selectedRecord.id]" class="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
@@ -1094,6 +1096,10 @@ const toggleStatus = (opt: string) => {
 }
 
 const runAgentOnAll = async () => {
+  if (campaignStatus.value?.is_running) {
+    alert('La campaña de enriquecimiento está actualmente en ejecución. El enriquecimiento masivo manual está pausado para no sobrecargar el sistema.')
+    return
+  }
   runningBatch.value = true
   try {
     const itemsToDetect = records.value.filter(r => r.estado === 'Pendiente').slice(0, 10).map(r => ({
@@ -1130,6 +1136,10 @@ const runAgentOnAll = async () => {
 
 const runAgentSingle = async (record: MonitoreoRecord | null) => {
   if (!record) return
+  if (campaignStatus.value?.is_running) {
+    alert('La campaña de enriquecimiento está actualmente en ejecución. Las acciones de enriquecimiento individual están pausadas para evitar conflictos.')
+    return
+  }
   if (record.estado === 'Completado' || record.estado === 'Pendiente de validación') {
     alert('Este registro ya ha sido enriquecido y no requiere un nuevo proceso de enriquecimiento.')
     return
@@ -1175,6 +1185,10 @@ const exportSummary = () => {
 }
 
 const scanAndPopulateMissing = async () => {
+  if (campaignStatus.value?.is_running) {
+    alert('La campaña de enriquecimiento está actualmente en ejecución. El escaneo de repositorio está temporalmente pausado.')
+    return
+  }
   scanningMissing.value = true
   try {
     const res = await proposalService.getCountMissing(true)
