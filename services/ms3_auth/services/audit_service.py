@@ -52,6 +52,10 @@ class MS3AuditWorker:
             act_clean = "Cierre de sesión"
         elif act_lower in ["monitoreo", "monitoreo de registros", "monitorear", "escanear", "scan", "monitoreo_registros"]:
             act_clean = "Monitoreo de registros"
+        elif "programada" in act_lower and "campa" in act_lower:
+            act_clean = "Campaña Anual Programada"
+        elif "campa" in act_lower:
+            act_clean = "Campaña Anual Manual"
         elif act_lower in ["aprobar", "aprobado", "approved", "aprobacion"]:
             act_clean = "Aprobar"
         elif act_lower in ["rechazar", "rechazado", "rejected", "rechazo"]:

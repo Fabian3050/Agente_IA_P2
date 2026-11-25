@@ -91,6 +91,18 @@ def startup():
     except Exception as e:
         logger.warning(f"[MS4] Advertencia al iniciar consumidor de RabbitMQ: {e}")
 
+    try:
+        import asyncio
+        try:
+            from services.campaign_service import campaign_manager
+        except ImportError:
+            from campaign_service import campaign_manager
+        loop = asyncio.get_event_loop()
+        loop.create_task(campaign_manager.scheduler_worker_loop())
+        logger.info("[MS4] Vigilancia del Scheduler de Campaña Anual iniciada exitosamente.")
+    except Exception as e:
+        logger.warning(f"[MS4] Advertencia al iniciar scheduler de campaña anual: {e}")
+
 
 @app.get("/health")
 def health():

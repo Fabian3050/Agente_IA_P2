@@ -869,3 +869,55 @@ def download_vriic_sample(
         filename=filename,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
+@router.get("/campaign/status")
+def get_campaign_status():
+    """
+    Retorna el estado en tiempo real de la campaña de enriquecimiento (autónoma o manual),
+    incluyendo porcentaje de avance, publicaciones procesadas, éxito/alertas y próxima fecha programada.
+    """
+    try:
+        from services.campaign_service import campaign_manager
+    except ImportError:
+        from campaign_service import campaign_manager
+    return campaign_manager.get_status()
+
+@router.post("/campaign/start")
+def start_campaign(
+    classify_with_ai: bool = Query(True, description="Clasificar áreas OCDE y ODS con IA (Ollama)"),
+    auto_harvest: bool = Query(True, description="Escanear DSpace-CRIS previamente e ingresar faltantes a la cola"),
+    batch_size: int = Query(10, description="Tamaño de lote para procesamiento"),
+    curator_name: Optional[str] = Query(None, description="Nombre del curador si la ejecución es manual desde la UI"),
+    curator_id: Optional[str] = Query(None, description="ID del curador responsable")
+):
+    """
+    Inicia la campaña de enriquecimiento en segundo plano.
+    Puede ejecutarse autónomamente según calendario o bajo demanda por un curador en cualquier momento del año.
+    """
+    try:
+        from services.campaign_service import campaign_manager
+    except ImportError:
+        from campaign_service import campaign_manager
+    
+    curator_user = None
+    if curator_name or curator_id:
+        curator_user = {"name": curator_name or "Curador VRIIC", "id": curator_id}
+
+    return campaign_manager.start_campaign(
+        classify_with_ai=classify_with_ai,
+        auto_harvest=auto_harvest,
+        batch_size=batch_size,
+        is_scheduled=False,
+        curator_user=curator_user
+    )
+
+@router.post("/campaign/stop")
+def stop_campaign():
+    """
+    Solicita la detención elegante de la campaña de enriquecimiento en curso.
+    """
+    try:
+        from services.campaign_service import campaign_manager
+    except ImportError:
+        from campaign_service import campaign_manager
+    return campaign_manager.stop_campaign()

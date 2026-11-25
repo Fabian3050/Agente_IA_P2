@@ -17,6 +17,83 @@
       </Card>
     </div>
 
+    <!-- Banner de Campaña Anual y Enriquecimiento Autónomo -->
+    <div class="mb-6 p-4 rounded-xl border transition-all" :class="campaignStatus?.is_running ? 'bg-teal-50/60 border-[#00aea7]/40 shadow-xs' : 'bg-slate-50 border-slate-200/80'">
+      <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div class="flex items-start gap-3">
+          <div
+            class="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5"
+            :class="campaignStatus?.is_running ? 'bg-[#00aea7] text-white animate-pulse' : 'bg-blue-100 text-[#1565C0]'"
+          >
+            <CalendarCheck v-if="!campaignStatus?.is_running" :size="18" />
+            <Activity v-else :size="18" class="animate-spin" />
+          </div>
+          <div>
+            <div class="flex items-center gap-2 flex-wrap">
+              <h3 class="text-xs font-bold text-slate-800">
+                Campaña Anual de Enriquecimiento Autónomo
+              </h3>
+              <span
+                class="text-[10px] font-semibold px-2 py-0.5 rounded-full border"
+                :class="campaignStatus?.is_running ? 'bg-teal-100 text-[#007e79] border-teal-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'"
+              >
+                {{ campaignStatus?.is_running ? 'En Ejecución' : 'Modo Autónomo Programado (Abril)' }}
+              </span>
+            </div>
+            <p class="text-[11px] text-slate-600 mt-0.5 leading-relaxed">
+              {{ campaignStatus?.is_running
+                ? campaignStatus.current_step
+                : `Programada para ejecutarse automáticamente el ${campaignStatus?.next_scheduled_run_formatted || '15 de abril a las 02:00 hrs'} tras la carga anual de DSpace. También puedes ejecutarla manualmente en cualquier momento del año.`
+              }}
+            </p>
+            <p v-if="campaignStatus?.is_running && campaignStatus.current_item_title" class="text-[10px] font-mono text-slate-500 truncate max-w-xl mt-1">
+              Procesando: {{ campaignStatus.current_item_title }}
+            </p>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-2 shrink-0 flex-wrap">
+          <button
+            v-if="!campaignStatus?.is_running"
+            @click="triggerManualCampaign"
+            :disabled="startingCampaign"
+            class="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-[#00aea7] hover:bg-[#009b95] rounded-lg shadow-sm transition-all cursor-pointer disabled:opacity-50"
+            title="Ejecutar la campaña completa de enriquecimiento bajo demanda ahora mismo"
+          >
+            <Play :size="13" />
+            <span>{{ startingCampaign ? 'Iniciando...' : 'Lanzar Campaña Anual Ahora' }}</span>
+          </button>
+          <button
+            v-else
+            @click="stopActiveCampaign"
+            :disabled="stoppingCampaign"
+            class="flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 rounded-lg shadow-xs transition-all cursor-pointer disabled:opacity-50"
+            title="Detener elegantemente la campaña de enriquecimiento en curso"
+          >
+            <Square :size="13" />
+            <span>{{ stoppingCampaign ? 'Deteniendo...' : 'Detener Campaña' }}</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Barra de progreso si está en ejecución -->
+      <div v-if="campaignStatus?.is_running" class="mt-3 pt-3 border-t border-[#00aea7]/20">
+        <div class="flex items-center justify-between text-[11px] mb-1">
+          <span class="font-medium text-slate-700">
+            Avance: <strong>{{ campaignStatus.processed_items }}</strong> de <strong>{{ campaignStatus.total_items }}</strong> publicaciones
+            ({{ campaignStatus.success_count }} enriquecidas con éxito)
+          </span>
+          <span class="font-bold text-[#00aea7]">{{ campaignStatus.progress_percent }}%</span>
+        </div>
+        <div class="w-full h-2 bg-slate-200 rounded-full overflow-hidden">
+          <div
+            class="h-full bg-[#00aea7] transition-all duration-300 rounded-full"
+            :style="{ width: `${campaignStatus.progress_percent}%` }"
+          />
+        </div>
+      </div>
+    </div>
+
     <Card>
       <!-- Toolbar -->
       <div class="flex items-center gap-3 p-4 border-b border-gray-50 flex-wrap">
@@ -514,8 +591,26 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
-import { Search, Zap, Download, Filter, ChevronDown, Eye, X, Sparkles, Check, RefreshCw, CheckCircle2, XCircle, AlertCircle } from 'lucide-vue-next'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import {
+  Search,
+  Zap,
+  Download,
+  Filter,
+  ChevronDown,
+  Eye,
+  X,
+  Sparkles,
+  Check,
+  RefreshCw,
+  CheckCircle2,
+  XCircle,
+  AlertCircle,
+  CalendarCheck,
+  Activity,
+  Play,
+  Square
+} from 'lucide-vue-next'
 import Card from '../components/common/Card.vue'
 import Badge from '../components/common/Badge.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
@@ -532,6 +627,12 @@ const runningBatch = ref(false)
 const scanningMissing = ref(false)
 const loading = ref(true)
 const enrichingIds = ref<Record<string, boolean>>({})
+
+// Estado de la Campaña Anual y Enriquecimiento Autónomo
+const campaignStatus = ref<any | null>(null)
+const startingCampaign = ref(false)
+const stoppingCampaign = ref(false)
+let campaignPollTimer: any = null
 
 const currentPage = ref(1)
 const pageSize = ref(15)
@@ -836,8 +937,76 @@ const loadRealQueue = async () => {
   }
 }
 
+const fetchCampaignStatus = async () => {
+  try {
+    const status = await proposalService.getCampaignStatus()
+    if (status) {
+      campaignStatus.value = status
+    }
+  } catch {}
+}
+
+const startCampaignPolling = () => {
+  clearInterval(campaignPollTimer)
+  campaignPollTimer = setInterval(async () => {
+    await fetchCampaignStatus()
+    if (!campaignStatus.value?.is_running) {
+      clearInterval(campaignPollTimer)
+      await loadRealQueue()
+    }
+  }, 3000)
+}
+
+const triggerManualCampaign = async () => {
+  if (!confirm('¿Deseas iniciar la campaña de enriquecimiento de publicaciones ahora? El agente escaneará DSpace-CRIS y enriquecerá todos los registros pendientes en segundo plano.')) return
+
+  startingCampaign.value = true
+  try {
+    const user = authService.getStoredUser()
+    const res = await proposalService.startCampaign({
+      classify_with_ai: true,
+      auto_harvest: true,
+      batch_size: 10,
+      curator_name: user?.fullName || 'Curador VRIIC',
+      curator_id: user?.id
+    })
+    if (res?.ok) {
+      await fetchCampaignStatus()
+      startCampaignPolling()
+    } else {
+      alert(res?.message || 'No se pudo iniciar la campaña.')
+    }
+  } catch (err: any) {
+    alert(`Error iniciando campaña: ${err?.response?.data?.detail || err.message || err}`)
+  } finally {
+    startingCampaign.value = false
+  }
+}
+
+const stopActiveCampaign = async () => {
+  if (!confirm('¿Estás seguro de solicitar la detención de la campaña en curso?')) return
+  stoppingCampaign.value = true
+  try {
+    await proposalService.stopCampaign()
+    await fetchCampaignStatus()
+  } catch (err: any) {
+    alert(`Error deteniendo campaña: ${err?.message || err}`)
+  } finally {
+    stoppingCampaign.value = false
+  }
+}
+
 onMounted(() => {
   loadRealQueue()
+  fetchCampaignStatus().then(() => {
+    if (campaignStatus.value?.is_running) {
+      startCampaignPolling()
+    }
+  })
+})
+
+onUnmounted(() => {
+  clearInterval(campaignPollTimer)
 })
 
 const totalPages = computed(() => Math.max(1, Math.ceil(totalFilteredRecords.value / pageSize.value)))

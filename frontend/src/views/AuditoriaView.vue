@@ -574,7 +574,8 @@ import {
   AlertCircle,
   Edit,
   Eye,
-  Key
+  Key,
+  CalendarCheck
 } from 'lucide-vue-next'
 import Card from '../components/common/Card.vue'
 import SectionHeader from '../components/common/SectionHeader.vue'
@@ -639,6 +640,7 @@ const uniqueUsersCount = computed(() => {
 
 const filterCategories = computed(() => [
   { key: 'todos', label: 'Todos', count: parsedEvents.value.length },
+  { key: 'campana', label: 'Campaña Anual', count: parsedEvents.value.filter(e => e.action.toLowerCase().includes('campa')).length },
   { key: 'monitoreo', label: 'Monitoreo de registros', count: parsedEvents.value.filter(e => e.isMonitoring).length },
   { key: 'aprobaciones', label: 'Aprobaciones', count: parsedEvents.value.filter(e => e.action.toLowerCase().includes('aprob')).length },
   { key: 'validaciones', label: 'Validaciones', count: parsedEvents.value.filter(e => e.action.toLowerCase().includes('valid')).length },
@@ -669,6 +671,7 @@ const formatJson = (val: any): string => {
 
 const getActionIcon = (action: string) => {
   const a = action.toLowerCase()
+  if (a.includes('campa')) return CalendarCheck
   if (a.includes('monitoreo')) return RefreshCw
   if (a.includes('valid')) return ShieldCheck
   if (a.includes('aprob')) return CheckCircle2
@@ -681,6 +684,7 @@ const getActionIcon = (action: string) => {
 
 const getActionBadgeClass = (action: string): string => {
   const a = action.toLowerCase()
+  if (a.includes('campa')) return 'bg-purple-50 text-purple-700 border-purple-200'
   if (a.includes('monitoreo')) return 'bg-blue-50 text-[#1565C0] border-blue-200'
   if (a.includes('valid')) return 'bg-teal-50 text-[#00aea7] border-teal-200'
   if (a.includes('aprob')) return 'bg-emerald-50 text-emerald-700 border-emerald-200'
@@ -754,7 +758,9 @@ const loadRealAuditLogs = async () => {
       const pItem = resolvedItemId ? proposalMap[resolvedItemId] : null
 
       let pubTitle = ''
-      if (isMonitoring) {
+      if (actLower.includes('campa')) {
+        pubTitle = 'Campaña Anual de Enriquecimiento (DSpace-CRIS)'
+      } else if (isMonitoring) {
         pubTitle = 'Repositorio DSpace-CRIS (Monitoreo de Metadatos)'
       } else if (isSystem) {
         pubTitle = isLogin ? 'Módulo de Autenticación Institucional' : 'Gestión de Seguridad y Usuarios'
@@ -921,7 +927,9 @@ const filteredEvents = computed(() => {
   let list = parsedEvents.value
 
   // Filtro de categoría
-  if (selectedCategory.value === 'monitoreo') {
+  if (selectedCategory.value === 'campana') {
+    list = list.filter(e => e.action.toLowerCase().includes('campa'))
+  } else if (selectedCategory.value === 'monitoreo') {
     list = list.filter(e => e.isMonitoring)
   } else if (selectedCategory.value === 'aprobaciones') {
     list = list.filter(e => e.action.toLowerCase().includes('aprob'))

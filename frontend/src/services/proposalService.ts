@@ -162,6 +162,31 @@ export const proposalService = {
   async markClosed(id: string): Promise<MetadataProposal> {
     const res = await ms4Client.post<MetadataProposal>(`/v3/proposals/${id}/mark-closed`)
     return res.data
+  },
+
+  async getCampaignStatus(): Promise<any> {
+    try {
+      const res = await ms4Client.get('/dspace/campaign/status')
+      return res.data
+    } catch {
+      return null
+    }
+  },
+
+  async startCampaign(params: {
+    classify_with_ai?: boolean
+    auto_harvest?: boolean
+    batch_size?: number
+    curator_name?: string
+    curator_id?: string
+  } = {}): Promise<any> {
+    const res = await ms4Client.post('/dspace/campaign/start', null, { params })
+    return res.data
+  },
+
+  async stopCampaign(): Promise<any> {
+    const res = await ms4Client.post('/dspace/campaign/stop')
+    return res.data
   }
 }
 
