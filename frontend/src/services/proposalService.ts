@@ -73,8 +73,10 @@ export const proposalService = {
     }
   },
 
-  async validateRecord(itemId: string | number): Promise<any> {
-    const res = await ms4Client.post(`/dspace/validation-records/${itemId}/validate`)
+  async validateRecord(itemId: string | number, userId?: string): Promise<any> {
+    const res = await ms4Client.post(`/dspace/validation-records/${itemId}/validate`, null, {
+      params: userId ? { user_id: userId } : undefined
+    })
     return res.data
   },
 

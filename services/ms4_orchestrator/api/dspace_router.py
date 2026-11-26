@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy.orm import Session
 from typing import Optional
+from datetime import datetime
 
 try:
     from services.dspace_service import DSpaceService
@@ -302,7 +303,7 @@ def get_dashboard_stats(
                 or_(
                     DSpaceEnrichmentQueue.estado.in_(["PENDIENTE_VALIDACION", "VALIDACION", "COINCIDENCIA_DUDOSA"]),
                     and_(
-                        DSpaceEnrichmentQueue.estado != "ENRIQUECIDO",
+                        DSpaceEnrichmentQueue.estado.notin_(["ENRIQUECIDO", "COMPLETO", "PENDIENTE"]),
                         DSpaceEnrichmentQueue.dspace_uuid.in_(list(candidate_uuid_set))
                     ) if candidate_uuid_set else False
                 )
@@ -311,7 +312,9 @@ def get_dashboard_stats(
         except Exception as e_val:
             print(f"[DashboardStats] Advertencia consultando pendientes_val_items: {e_val}")
 
-        all_queue_not_enriched = db.query(DSpaceEnrichmentQueue).filter(DSpaceEnrichmentQueue.estado != "ENRIQUECIDO").all()
+        all_queue_not_enriched = db.query(DSpaceEnrichmentQueue).filter(
+            DSpaceEnrichmentQueue.estado.notin_(["ENRIQUECIDO", "COMPLETO", "PENDIENTE"])
+        ).all()
         for it in all_queue_not_enriched:
             if it.id not in pendientes_val_ids and it.metadatos_recuperados:
                 rec = it.metadatos_recuperados if isinstance(it.metadatos_recuperados, dict) else {}
@@ -682,7 +685,7 @@ def get_validation_records(
         print(f"[ValidationRecords] Advertencia consultando candidate_match: {e_cm}")
 
     items = db.query(DSpaceEnrichmentQueue).filter(
-        DSpaceEnrichmentQueue.estado != "ENRIQUECIDO"
+        DSpaceEnrichmentQueue.estado.notin_(["ENRIQUECIDO", "COMPLETO", "PENDIENTE"])
     ).all()
 
     validation_items = []
@@ -752,7 +755,17 @@ def get_validation_records(
                 "match_score": score or (confianza_pct / 100.0),
                 "orcid": item_orcid,
                 "estado": "Pendiente de Validación",
-                "detalle": f"El puntaje de confianza algorítmica es {confianza_pct}% (menor al umbral del 80%). Se requiere revisión manual antes de consolidar en DSpace-CRIS."
+                "detalle": f"El puntaje de confianza algorítmica es {confianza_pct}% (menor al umbral del 80%). Se requiere revisión manual antes de consolidar en DSpace-CRIS.",
+                "tipo_recurso": it.tipo_recurso,
+                "tipo_falencia": it.tipo_falencia,
+                "resumen_original": it.resumen_original,
+                "abstract_enriquecido": it.abstract_enriquecido or rec.get("abstract"),
+                "palabras_clave": it.palabras_clave if it.palabras_clave else (rec.get("keywords") or []),
+                "area_ocde": it.area_ocde if it.area_ocde else (rec.get("area_ocde") or []),
+                "area_ods": it.area_ods if it.area_ods else (rec.get("area_ods") or []),
+                "derechos_acceso": it.derechos_acceso or rec.get("access_rights"),
+                "licencia": it.licencia or rec.get("license"),
+                "fuente_financiamiento": it.fuente_financiamiento or rec.get("funding"),
             })
 
     return validation_items
@@ -760,12 +773,17 @@ def get_validation_records(
 @router.post("/validation-records/{item_id}/validate")
 def validate_record(
     item_id: int,
+    user_id: Optional[str] = Query(None, description="ID del usuario que realiza la validación"),
     db: Session = Depends(get_db)
 ):
     """
     Aprueba manualmente la validación de un registro, marcándolo como ENRIQUECIDO.
     """
-    from models import DSpaceEnrichmentQueue
+    try:
+        from models import DSpaceEnrichmentQueue
+    except ImportError:
+        from services.ms4_orchestrator.models import DSpaceEnrichmentQueue
+
     item = db.query(DSpaceEnrichmentQueue).filter(DSpaceEnrichmentQueue.id == item_id).first()
     if not item:
         raise HTTPException(status_code=404, detail=f"No se encontró el registro con ID {item_id}")
@@ -783,9 +801,10 @@ def validate_record(
             from services.ms4_orchestrator.clients.ms_clients import MS3Client
         ms3_client = MS3Client()
         ms3_client.record_audit_sync(
-            item_id=str(item.id),
+            user_id=user_id,
+            item_id=str(item.dspace_uuid or item.id),
             action="Validar",
-            new_value={"titulo": item.titulo, "estado": "ENRIQUECIDO", "doi": item.doi}
+            new_value={"titulo": item.titulo, "estado": "ENRIQUECIDO", "doi": item.doi, "uuid": item.dspace_uuid}
         )
     except Exception as e_aud:
         print(f"[DSpaceRouter MS4] Advertencia registrando auditoría de validación en MS3: {e_aud}")
@@ -869,9 +888,16 @@ def reject_queue_item(
     db: Session = Depends(get_db)
 ):
     """
-    Rechaza una publicación enriquecida, reiniciándola a PENDIENTE para re-procesamiento.
+    Rechaza una publicación enriquecida o coincidencia dudosa, limpiando los metadatos
+    propuestos y reiniciándola a PENDIENTE para re-procesamiento.
     """
-    from models import DSpaceEnrichmentQueue
+    from sqlalchemy import text
+    import uuid as uuid_lib
+    try:
+        from models import DSpaceEnrichmentQueue
+    except ImportError:
+        from services.ms4_orchestrator.models import DSpaceEnrichmentQueue
+
     item = None
     if str(item_id).isdigit():
         item = db.query(DSpaceEnrichmentQueue).filter(DSpaceEnrichmentQueue.id == int(item_id)).first()
@@ -879,10 +905,36 @@ def reject_queue_item(
         item = db.query(DSpaceEnrichmentQueue).filter(DSpaceEnrichmentQueue.dspace_uuid == str(item_id)).first()
     if not item:
         raise HTTPException(status_code=404, detail=f"No se encontró el registro #{item_id}")
+
+    # Limpiar los metadatos rechazados para evitar que queden residuos de una coincidencia errónea
     item.estado = "PENDIENTE"
+    item.fuente_enriquecimiento = None
+    item.abstract_enriquecido = None
+    item.palabras_clave = None
+    item.fuente_financiamiento = None
+    item.derechos_acceso = None
+    item.licencia = None
+    item.area_ocde = None
+    item.area_ods = None
+    item.metadatos_recuperados = None
     item.updated_at = datetime.utcnow()
+
+    # Limpiar candidatos previos en candidate_match si el dspace_uuid es un UUID válido
+    if item.dspace_uuid:
+        try:
+            uuid_lib.UUID(str(item.dspace_uuid))
+            db.execute(
+                text("DELETE FROM candidate_match WHERE id_item_enrichment = :uid"),
+                {"uid": str(item.dspace_uuid)}
+            )
+        except Exception as e_cm:
+            print(f"[DSpaceRouter MS4] Advertencia limpiando candidate_match al rechazar: {e_cm}")
+
     db.commit()
     db.refresh(item)
+
+    reason = (payload or {}).get("reason") or "Rechazado en validación/aprobación para re-procesamiento"
+    user_id = (payload or {}).get("user_id")
 
     # Registro de auditoría vía MS3 (Microservicio propietario de AuditLog)
     try:
@@ -892,10 +944,11 @@ def reject_queue_item(
             from services.ms4_orchestrator.clients.ms_clients import MS3Client
         ms3_client = MS3Client()
         ms3_client.record_audit_sync(
+            user_id=user_id,
             item_id=str(item.dspace_uuid or item.id),
             action="Rechazar",
             new_value={"titulo": item.titulo, "estado": "PENDIENTE", "doi": item.doi},
-            rejection_reason="Rechazado en sección de aprobación para re-procesamiento"
+            rejection_reason=reason
         )
     except Exception as e_aud:
         print(f"[DSpaceRouter MS4] Advertencia registrando auditoría de rechazo en MS3: {e_aud}")
